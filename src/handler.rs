@@ -443,11 +443,7 @@ async fn handle_message(
         Some(s) => s,
         None => {
             let _ = slack
-                .send_message(
-                    channel,
-                    thread_ts,
-                    "No active session. Use /agent <name> to start one.",
-                )
+                .send_message(channel, thread_ts, "No active session. Use #help for help.")
                 .await;
             return;
         }
