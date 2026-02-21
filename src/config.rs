@@ -86,21 +86,31 @@ impl Config {
 
         let config = Config {
             slack: SlackConfig {
-                bot_token: "xoxb-your-bot-token".to_string(),
-                app_token: "xapp-your-app-token".to_string(),
+                bot_token: "xoxb-your-bot-token".into(),
+                app_token: "xapp-your-app-token".into(),
             },
             bridge: BridgeConfig {
-                default_workspace: "~".to_string(),
+                default_workspace: "~".into(),
                 auto_approve: false,
             },
-            agents: vec![AgentConfig {
-                name: "kiro".to_string(),
-                description: "Kiro CLI - https://kiro.dev/cli/".to_string(),
-                command: "kiro-cli".to_string(),
-                args: vec!["acp".into()],
-                env: HashMap::new(),
-                auto_approve: false,
-            }],
+            agents: vec![
+                AgentConfig {
+                    name: "kiro".into(),
+                    description: "Kiro CLI - https://kiro.dev/cli/".into(),
+                    command: "kiro-cli".into(),
+                    args: vec!["acp".into()],
+                    env: HashMap::new(),
+                    auto_approve: false,
+                },
+                AgentConfig {
+                    name: "opencode".into(),
+                    description: "OpenCode - https://opencode.ai/".into(),
+                    command: "opencode".into(),
+                    args: vec!["acp".into()],
+                    env: HashMap::new(),
+                    auto_approve: false,
+                },
+            ],
         };
 
         let scaffold = config.to_scaffold()?;
