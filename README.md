@@ -54,7 +54,7 @@ anywhere run
 
 Commands start with `#` and can be used to control the bot:
 
-- `#agent <name> [workspace]` - Start session with specific agent (creates a new thread). Can only be used in main channel, not in threads.
+- `#new <name> [workspace]` - Start session with specific agent (creates a new thread). Can only be used in main channel, not in threads.
 - `#agents` - List all available agents with descriptions
 - `#session` - Show current session info (agent, workspace, auto-approve setting). Must be used in an active agent thread.
 - `#end` - End current session and cleanup. Must be used in an active agent thread.

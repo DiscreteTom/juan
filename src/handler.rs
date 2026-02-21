@@ -84,7 +84,7 @@ pub async fn handle_event(
 ///
 /// Supported commands:
 /// - #help - Show available commands
-/// - #agent <name> [workspace] - Start a new session
+/// - #new <name> [workspace] - Start a new session
 /// - #agents - List available agents
 /// - #session - Show current session info
 /// - #end - End current session
@@ -104,15 +104,15 @@ async fn handle_command(
     let command = parts[0];
 
     match command {
-        "#agent" => {
-            debug!("Processing #agent command: parts={:?}", parts);
+        "#new" => {
+            debug!("Processing #new command: parts={:?}", parts);
             // Can only create sessions in main channel, not in existing threads
             if thread_ts.is_some() {
                 let _ = slack
                     .send_message(
                         channel,
                         thread_ts,
-                        "Cannot create agent in a thread. Use #agent in the main channel.",
+                        "Cannot create agent in a thread. Use #new in the main channel.",
                     )
                     .await;
                 return;
@@ -123,7 +123,7 @@ async fn handle_command(
                     .send_message(
                         channel,
                         Some(ts),
-                        "Usage: #agent <agent_name> [workspace_path]",
+                        "Usage: #new <agent_name> [workspace_path]",
                     )
                     .await;
                 return;
@@ -389,7 +389,7 @@ async fn handle_command(
                     thread_ts,
                     "Available commands:\n\
                     • #help - Show this help message\n\
-                    • #agent <name> [workspace] - Start a new agent session in a thread\n\
+                    • #new <name> [workspace] - Start a new agent session in a thread\n\
                     • #agents - List available agents\n\
                     • #session - Show current agent session info\n\
                     • #end - End current agent session\n\
