@@ -1,3 +1,10 @@
+/// Agent manager for spawning and communicating with ACP agents.
+///
+/// This module handles:
+/// - Spawning agent processes with stdio communication
+/// - Managing ACP protocol connections
+/// - Routing requests/responses between Slack and agents
+/// - Handling agent notifications
 use agent_client_protocol::*;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -10,21 +17,29 @@ use tracing::{error, info};
 
 use crate::config::AgentConfig;
 
+/// Manages all spawned agents and their communication channels.
 pub struct AgentManager {
+    /// Map of agent name to agent handle
     agents: Arc<RwLock<HashMap<String, AgentHandle>>>,
+    /// Channel for receiving notifications from agents
     notification_tx: mpsc::UnboundedSender<(String, SessionNotification)>,
 }
 
+/// Handle for communicating with a spawned agent.
 struct AgentHandle {
     config: AgentConfig,
+    /// Channel for sending commands to the agent's task
     tx: mpsc::UnboundedSender<AgentCommand>,
 }
 
+/// Commands that can be sent to an agent task.
 enum AgentCommand {
+    /// Create a new ACP session
     NewSession {
         req: NewSessionRequest,
         resp_tx: oneshot::Sender<agent_client_protocol::Result<NewSessionResponse>>,
     },
+    /// Send a prompt to an existing session
     Prompt {
         req: PromptRequest,
         resp_tx: oneshot::Sender<agent_client_protocol::Result<PromptResponse>>,
@@ -32,6 +47,7 @@ enum AgentCommand {
 }
 
 impl AgentManager {
+    /// Creates a new agent manager with the given notification channel.
     pub fn new(notification_tx: mpsc::UnboundedSender<(String, SessionNotification)>) -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
@@ -39,6 +55,8 @@ impl AgentManager {
         }
     }
 
+    /// Spawns multiple agents from their configurations.
+    /// Logs errors but continues spawning remaining agents if one fails.
     pub async fn spawn_agents(&self, configs: Vec<AgentConfig>) -> Result<()> {
         for config in configs {
             if let Err(e) = self.spawn_agent(config.clone()).await {
@@ -48,6 +66,13 @@ impl AgentManager {
         Ok(())
     }
 
+    /// Spawns a single agent process and sets up ACP communication.
+    ///
+    /// Creates:
+    /// - Child process with stdin/stdout pipes
+    /// - Dedicated thread with local runtime for ACP protocol
+    /// - Command channel for sending requests
+    /// - Notification forwarding to main loop
     async fn spawn_agent(&self, config: AgentConfig) -> Result<()> {
         info!("Spawning agent: {}", config.name);
 
@@ -62,6 +87,7 @@ impl AgentManager {
             .spawn()
             .context(format!("Failed to spawn agent: {}", config.name))?;
 
+        // Get stdio handles and convert to futures_io types for ACP
         let stdin = process
             .stdin
             .take()
@@ -78,6 +104,8 @@ impl AgentManager {
         let agent_name2 = agent_name.clone();
         let notification_tx = self.notification_tx.clone();
 
+        // Spawn dedicated thread for this agent's ACP communication
+        // Uses LocalSet to allow !Send futures from ACP library
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -102,7 +130,7 @@ impl AgentManager {
                     }
                 });
 
-                // Initialize the agent
+                // Initialize the agent with ACP protocol
                 let init_req = InitializeRequest::new(ProtocolVersion::LATEST)
                     .client_info(Implementation::new("anywhere", "0.1.0"));
 
@@ -114,7 +142,7 @@ impl AgentManager {
                     }
                 }
 
-                // Handle commands
+                // Handle commands from the main loop
                 while let Some(cmd) = cmd_rx.recv().await {
                     match cmd {
                         AgentCommand::NewSession { req, resp_tx } => {
@@ -140,6 +168,7 @@ impl AgentManager {
         Ok(())
     }
 
+    /// Creates a new ACP session with the specified agent.
     pub async fn new_session(
         &self,
         agent_name: &str,
@@ -165,6 +194,7 @@ impl AgentManager {
             .map_err(|e| anyhow::anyhow!("Agent error: {}", e))
     }
 
+    /// Sends a prompt to an agent's existing session.
     pub async fn prompt(&self, agent_name: &str, req: PromptRequest) -> Result<PromptResponse> {
         let handle = self
             .agents
@@ -186,11 +216,13 @@ impl AgentManager {
             .map_err(|e| anyhow::anyhow!("Agent error: {}", e))
     }
 
+    /// Lists all currently running agents.
     pub async fn list_agents(&self) -> Vec<String> {
         self.agents.read().await.keys().cloned().collect()
     }
 }
 
+/// ACP client implementation for handling agent notifications and permission requests.
 struct NotificationClient {
     agent_name: String,
     notification_tx: mpsc::UnboundedSender<(String, SessionNotification)>,
@@ -198,6 +230,8 @@ struct NotificationClient {
 
 #[async_trait::async_trait(?Send)]
 impl Client for NotificationClient {
+    /// Handles permission requests from agents.
+    /// Currently auto-approves by selecting the first option.
     async fn request_permission(
         &self,
         args: RequestPermissionRequest,
@@ -214,6 +248,8 @@ impl Client for NotificationClient {
         ))
     }
 
+    /// Handles session notifications from agents (e.g., message chunks).
+    /// Forwards to main loop for processing.
     async fn session_notification(
         &self,
         args: SessionNotification,

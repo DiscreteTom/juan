@@ -1,7 +1,15 @@
+/// Message handler for processing Slack events and routing to appropriate handlers.
+///
+/// This module is the main dispatcher for all Slack events, handling:
+/// - Shell commands (starting with !)
+/// - Bot commands (starting with #)
+/// - Regular messages to agents
 use crate::{agent_manager, config, session_manager, slack_client};
 use std::sync::Arc;
 use tokio::process::Command;
 
+/// Main entry point for handling Slack events.
+/// Routes events to appropriate handlers based on message content.
 pub async fn handle_event(
     event: slack_client::SlackEvent,
     slack: Arc<slack_client::SlackConnection>,
@@ -26,11 +34,13 @@ pub async fn handle_event(
             text,
             ..
         } => {
+            // Shell commands (!) - execute local commands
             if text.trim().starts_with('!') {
                 handle_shell_command(&text, &channel, thread_ts.as_deref(), slack).await;
                 return;
             }
 
+            // Bot commands (#) - control sessions and agents
             if text.trim().starts_with('#') {
                 if handle_command(
                     &text,
@@ -48,6 +58,7 @@ pub async fn handle_event(
                 }
             }
 
+            // Regular messages - forward to agent
             handle_message(
                 &text,
                 &channel,
@@ -61,6 +72,15 @@ pub async fn handle_event(
     }
 }
 
+/// Handles bot commands (messages starting with #).
+///
+/// Supported commands:
+/// - #agent <name> [workspace] - Start a new session
+/// - #agents - List available agents
+/// - #session - Show current session info
+/// - #end - End current session
+///
+/// Returns true if the message was handled as a command, false otherwise.
 async fn handle_command(
     text: &str,
     channel: &str,
@@ -76,6 +96,7 @@ async fn handle_command(
 
     match command {
         "#agent" => {
+            // Can only create sessions in main channel, not in existing threads
             if thread_ts.is_some() {
                 let _ = slack
                     .send_message(
@@ -101,6 +122,7 @@ async fn handle_command(
             let agent_name = parts[1];
             let workspace = parts.get(2).map(|s| s.to_string());
 
+            // Spawn agent if not already running
             if agent_manager
                 .list_agents()
                 .await
@@ -132,6 +154,7 @@ async fn handle_command(
                 }
             }
 
+            // Create session (uses ts as thread key, creating a new thread)
             match session_manager
                 .create_session(ts.to_string(), agent_name.to_string(), workspace)
                 .await
@@ -158,6 +181,7 @@ async fn handle_command(
             true
         }
         "#agents" => {
+            // List all configured agents with descriptions
             let agent_list: Vec<String> = config
                 .agents
                 .iter()
@@ -168,6 +192,7 @@ async fn handle_command(
             true
         }
         "#session" => {
+            // Show current session info (only works in threads)
             if thread_ts.is_none() {
                 let _ = slack
                     .send_message(channel, None, "This command can only be used in a thread.")
@@ -190,6 +215,7 @@ async fn handle_command(
             true
         }
         "#end" => {
+            // End current session (only works in threads)
             if thread_ts.is_none() {
                 let _ = slack
                     .send_message(channel, None, "This command can only be used in a thread.")
@@ -212,11 +238,19 @@ async fn handle_command(
             }
             true
         }
+        // Unknown command starting with # - not handled
         _ if command.starts_with('#') => false,
         _ => false,
     }
 }
 
+/// Handles regular messages to agents (not commands or shell commands).
+///
+/// Flow:
+/// 1. Check if thread has an active session
+/// 2. Create ACP session if this is the first message
+/// 3. Send prompt to agent via ACP
+/// 4. Update Slack with response
 async fn handle_message(
     text: &str,
     channel: &str,
@@ -227,6 +261,7 @@ async fn handle_message(
 ) {
     let thread_key = thread_ts.unwrap_or(channel);
 
+    // Verify session exists for this thread
     let session = match session_manager.get_session(thread_key).await {
         Some(s) => s,
         None => {
@@ -241,6 +276,7 @@ async fn handle_message(
         }
     };
 
+    // If session ID is still placeholder, create actual ACP session
     if session.session_id.to_string().starts_with("session-") {
         let workspace_path = session_manager.expand_workspace_path(&session.workspace);
         let new_session_req = agent_client_protocol::NewSessionRequest::new(workspace_path);
@@ -250,6 +286,7 @@ async fn handle_message(
             .await
         {
             Ok(resp) => {
+                // Update session with real ACP session ID
                 if let Err(e) = session_manager
                     .update_session_id(thread_key, resp.session_id)
                     .await
@@ -271,6 +308,7 @@ async fn handle_message(
         }
     }
 
+    // Get updated session with real session ID
     let session = session_manager.get_session(thread_key).await.unwrap();
     let prompt_req = agent_client_protocol::PromptRequest::new(
         session.session_id.clone(),
@@ -279,6 +317,7 @@ async fn handle_message(
         )],
     );
 
+    // Send "Thinking..." message that will be updated with response
     let thinking_msg = match slack.send_message(channel, thread_ts, "Thinking...").await {
         Ok(ts) => Some(ts),
         Err(e) => {
@@ -287,6 +326,7 @@ async fn handle_message(
         }
     };
 
+    // Send prompt to agent and wait for response
     match agent_manager.prompt(&session.agent_name, prompt_req).await {
         Ok(resp) => {
             let response_text = format!("Agent response: {:?}", resp.stop_reason);
@@ -310,6 +350,8 @@ async fn handle_message(
     }
 }
 
+/// Handles shell commands (messages starting with !).
+/// Executes the command locally and sends output back to Slack.
 async fn handle_shell_command(
     text: &str,
     channel: &str,
@@ -325,8 +367,10 @@ async fn handle_shell_command(
         return;
     }
 
+    // Execute command via shell
     let output = Command::new("sh").arg("-c").arg(cmd).output().await;
 
+    // Format response with stdout/stderr
     let response = match output {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
