@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
 
     match args.command {
         cli::Command::Init { config, r#override } => {
-            return handle_init(&config, r#override);
+            return config::Config::init(&config, r#override);
         }
         cli::Command::Run { config, log_level } => {
             // Initialize logging with the specified level
@@ -41,46 +41,5 @@ async fn main() -> Result<()> {
         }
     }
 
-    Ok(())
-}
-
-/// Handles the `init` subcommand to generate a scaffold configuration file.
-///
-/// Creates a default configuration with example values that users can customize.
-/// Fails if the file already exists unless --override is specified.
-fn handle_init(output: &str, override_existing: bool) -> Result<()> {
-    use std::collections::HashMap;
-    use toml_scaffold::TomlScaffold;
-
-    if !override_existing && std::path::Path::new(output).exists() {
-        anyhow::bail!(
-            "File already exists: {}. Use --override to overwrite.",
-            output
-        );
-    }
-
-    // Create a default configuration with example values
-    let config = config::Config {
-        slack: config::SlackConfig {
-            bot_token: "xoxb-your-bot-token".to_string(),
-            app_token: "xapp-your-app-token".to_string(),
-        },
-        bridge: config::BridgeConfig {
-            default_workspace: "~".to_string(),
-            auto_approve: false,
-        },
-        agents: vec![config::AgentConfig {
-            name: "kiro".to_string(),
-            description: "Kiro CLI - https://kiro.dev/cli/".to_string(),
-            command: "kiro-cli".to_string(),
-            args: vec!["acp".into()],
-            env: HashMap::new(),
-            auto_approve: false,
-        }],
-    };
-
-    let scaffold = config.to_scaffold()?;
-    std::fs::write(output, scaffold)?;
-    println!("Config scaffold written to: {}", output);
     Ok(())
 }

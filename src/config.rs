@@ -63,6 +63,42 @@ impl Config {
         Ok(config)
     }
 
+    pub fn init(output: &str, override_existing: bool) -> Result<()> {
+        use std::collections::HashMap;
+        use toml_scaffold::TomlScaffold;
+
+        if !override_existing && std::path::Path::new(output).exists() {
+            anyhow::bail!(
+                "File already exists: {}. Use --override to overwrite.",
+                output
+            );
+        }
+
+        let config = Config {
+            slack: SlackConfig {
+                bot_token: "xoxb-your-bot-token".to_string(),
+                app_token: "xapp-your-app-token".to_string(),
+            },
+            bridge: BridgeConfig {
+                default_workspace: "~".to_string(),
+                auto_approve: false,
+            },
+            agents: vec![AgentConfig {
+                name: "kiro".to_string(),
+                description: "Kiro CLI - https://kiro.dev/cli/".to_string(),
+                command: "kiro-cli".to_string(),
+                args: vec!["acp".into()],
+                env: HashMap::new(),
+                auto_approve: false,
+            }],
+        };
+
+        let scaffold = config.to_scaffold()?;
+        std::fs::write(output, scaffold)?;
+        println!("Config scaffold written to: {}", output);
+        Ok(())
+    }
+
     fn validate(&self) -> Result<()> {
         anyhow::ensure!(
             !self.agents.is_empty(),
