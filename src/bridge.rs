@@ -209,19 +209,15 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                             .unwrap_or_default()
                                     };
 
-                                    let status_icon = match status {
-                                        agent_client_protocol::ToolCallStatus::Completed => {
-                                            "✅ Completed"
-                                        }
-                                        agent_client_protocol::ToolCallStatus::Failed => {
-                                            "❌ Failed"
-                                        }
+                                    let status_emoji = match status {
+                                        agent_client_protocol::ToolCallStatus::Completed => "✅",
+                                        agent_client_protocol::ToolCallStatus::Failed => "❌",
                                         _ => unreachable!(),
                                     };
 
                                     let mut msg = format!(
-                                        "🔧 Tool: {} - {}{}",
-                                        tool_call.title, status_icon, input_str
+                                        "{} Tool: {}{}",
+                                        status_emoji, tool_call.title, input_str
                                     );
 
                                     // Render content from original tool call
