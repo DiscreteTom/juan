@@ -7,7 +7,7 @@
 /// - The ACP session ID
 /// - Auto-approve settings
 use agent_client_protocol::*;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

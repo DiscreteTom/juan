@@ -317,35 +317,17 @@ async fn handle_message(
         )],
     );
 
-    // Send "Thinking..." message that will be updated with response
-    let thinking_msg = match slack.send_message(channel, thread_ts, "Thinking...").await {
-        Ok(ts) => Some(ts),
-        Err(e) => {
-            tracing::error!("Failed to send thinking message: {}", e);
-            None
-        }
-    };
-
-    // Send prompt to agent and wait for response
+    // Send prompt to agent - response will stream via notifications
     match agent_manager.prompt(&session.agent_name, prompt_req).await {
         Ok(resp) => {
-            let response_text = format!("Agent response: {:?}", resp.stop_reason);
-
-            if let Some(msg_ts) = thinking_msg {
-                let _ = slack.update_message(channel, &msg_ts, &response_text).await;
-            } else {
-                let _ = slack.send_message(channel, thread_ts, &response_text).await;
-            }
+            // Just log completion, actual messages already sent via notifications
+            tracing::info!("Prompt completed with stop_reason: {:?}", resp.stop_reason);
         }
         Err(e) => {
             tracing::error!("Failed to send prompt: {}", e);
-            let error_msg = format!("Error: {}", e);
-
-            if let Some(msg_ts) = thinking_msg {
-                let _ = slack.update_message(channel, &msg_ts, &error_msg).await;
-            } else {
-                let _ = slack.send_message(channel, thread_ts, &error_msg).await;
-            }
+            let _ = slack
+                .send_message(channel, thread_ts, &format!("Error: {}", e))
+                .await;
         }
     }
 }

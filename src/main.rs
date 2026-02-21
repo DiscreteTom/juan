@@ -7,6 +7,7 @@
 /// 4. Connecting to Slack
 /// 5. Processing events in the main loop
 mod agent_manager;
+mod bridge;
 mod cli;
 mod config;
 mod message_handler;
@@ -16,8 +17,9 @@ mod slack_client;
 use anyhow::Result;
 use clap::Parser;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tracing::info;
+
+use crate::bridge::run_bridge;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -29,9 +31,7 @@ async fn main() -> Result<()> {
         }
         cli::Command::Run { config, log_level } => {
             // Initialize logging with the specified level
-            tracing_subscriber::fmt()
-                .with_env_filter(log_level)
-                .init();
+            tracing_subscriber::fmt().with_env_filter(log_level).init();
 
             info!("Loading configuration from: {}", config);
             let config = Arc::new(config::Config::load(&config)?);
@@ -39,83 +39,6 @@ async fn main() -> Result<()> {
             info!("Configuration loaded successfully");
             run_bridge(config).await?;
         }
-    }
-
-    Ok(())
-}
-
-async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
-    info!("Slack bot configured");
-    info!("Default workspace: {}", config.bridge.default_workspace);
-    info!("Auto-approve: {}", config.bridge.auto_approve);
-    info!("Configured agents: {}", config.agents.len());
-
-    for agent in &config.agents {
-        info!(
-            "  - {} ({}): {}",
-            agent.name, agent.command, agent.description
-        );
-    }
-
-    // Create channel for agent notifications (agent -> main loop)
-    let (notification_tx, mut notification_rx) = mpsc::unbounded_channel();
-    let agent_manager = Arc::new(agent_manager::AgentManager::new(notification_tx));
-    info!("Agent manager initialized (agents will spawn on-demand)");
-
-    // Create session manager to track Slack thread -> agent session mappings
-    let session_manager = Arc::new(session_manager::SessionManager::new(config.clone()));
-    info!("Session manager initialized");
-
-    // Create Slack client and event channel (Slack -> main loop)
-    let slack = Arc::new(slack_client::SlackConnection::new(
-        config.slack.bot_token.clone(),
-    ));
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-
-    // Spawn task to handle agent notifications and forward to Slack
-    let slack_clone = slack.clone();
-    let session_manager_clone = session_manager.clone();
-    tokio::spawn(async move {
-        while let Some((_agent_name, notification)) = notification_rx.recv().await {
-            match notification.update {
-                // Forward agent message chunks to the appropriate Slack thread
-                agent_client_protocol::SessionUpdate::AgentMessageChunk(chunk) => {
-                    if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
-                        // Find the thread associated with this session
-                        for (thread_key, session) in session_manager_clone.list_sessions().await {
-                            if session.session_id == notification.session_id {
-                                let _ = slack_clone
-                                    .send_message(&thread_key, None, &text.text)
-                                    .await;
-                                break;
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    });
-
-    // Spawn task to connect to Slack and forward events to main loop
-    let slack_clone = slack.clone();
-    let app_token = config.slack.app_token.clone();
-    tokio::spawn(async move {
-        if let Err(e) = slack_clone.connect(app_token, event_tx).await {
-            tracing::error!("Slack connection error: {}", e);
-        }
-    });
-
-    // Main event loop: process Slack events
-    while let Some(event) = event_rx.recv().await {
-        message_handler::handle_event(
-            event,
-            slack.clone(),
-            config.clone(),
-            agent_manager.clone(),
-            session_manager.clone(),
-        )
-        .await;
     }
 
     Ok(())
