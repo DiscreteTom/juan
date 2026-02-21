@@ -394,7 +394,8 @@ async fn handle_command(
                     • #session - Show current agent session info\n\
                     • #end - End current agent session\n\
                     • #read <file_path> - Read local file content\n\
-                    • #diff [file_path] - Show git diff",
+                    • #diff [file_path] - Show git diff\n\
+                    • !<command> - Execute shell command",
                 )
                 .await;
         }
