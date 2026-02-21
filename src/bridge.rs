@@ -127,7 +127,26 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                         for item in &tool_call.content {
                             match item {
                                 agent_client_protocol::ToolCallContent::Diff(diff) => {
-                                    let diff_text = format!("{}", diff.new_text);
+                                    // Generate unified diff format
+                                    let diff_text = if let Some(old_text) = &diff.old_text {
+                                        format!(
+                                            "--- {}\n+++ {}\n{}",
+                                            diff.path.display(),
+                                            diff.path.display(),
+                                            generate_unified_diff(old_text, &diff.new_text)
+                                        )
+                                    } else {
+                                        // New file
+                                        format!(
+                                            "--- /dev/null\n+++ {}\n{}",
+                                            diff.path.display(),
+                                            diff.new_text
+                                                .lines()
+                                                .map(|line| format!("+{}", line))
+                                                .collect::<Vec<_>>()
+                                                .join("\n")
+                                        )
+                                    };
                                     let ticks = crate::utils::safe_backticks(&diff_text);
                                     msg.push_str(&format!(
                                         "\nOutput:\n{}diff\n{}\n{}",
@@ -224,7 +243,30 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     for item in &tool_call.content {
                                         match item {
                                             agent_client_protocol::ToolCallContent::Diff(diff) => {
-                                                let diff_text = format!("{}", diff.new_text);
+                                                // Generate unified diff format
+                                                let diff_text =
+                                                    if let Some(old_text) = &diff.old_text {
+                                                        format!(
+                                                            "--- {}\n+++ {}\n{}",
+                                                            diff.path.display(),
+                                                            diff.path.display(),
+                                                            generate_unified_diff(
+                                                                old_text,
+                                                                &diff.new_text
+                                                            )
+                                                        )
+                                                    } else {
+                                                        // New file
+                                                        format!(
+                                                            "--- /dev/null\n+++ {}\n{}",
+                                                            diff.path.display(),
+                                                            diff.new_text
+                                                                .lines()
+                                                                .map(|line| format!("+{}", line))
+                                                                .collect::<Vec<_>>()
+                                                                .join("\n")
+                                                        )
+                                                    };
                                                 let ticks =
                                                     crate::utils::safe_backticks(&diff_text);
                                                 msg.push_str(&format!(
@@ -281,4 +323,33 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn generate_unified_diff(old_text: &str, new_text: &str) -> String {
+    let old_lines: Vec<&str> = old_text.lines().collect();
+    let new_lines: Vec<&str> = new_text.lines().collect();
+
+    let mut result = Vec::new();
+    let mut i = 0;
+    let mut j = 0;
+
+    while i < old_lines.len() || j < new_lines.len() {
+        if i < old_lines.len() && j < new_lines.len() && old_lines[i] == new_lines[j] {
+            result.push(format!(" {}", old_lines[i]));
+            i += 1;
+            j += 1;
+        } else {
+            // Simple diff: show removals then additions
+            while i < old_lines.len() && (j >= new_lines.len() || old_lines[i] != new_lines[j]) {
+                result.push(format!("-{}", old_lines[i]));
+                i += 1;
+            }
+            while j < new_lines.len() && (i >= old_lines.len() || old_lines[i] != new_lines[j]) {
+                result.push(format!("+{}", new_lines[j]));
+                j += 1;
+            }
+        }
+    }
+
+    result.join("\n")
 }
