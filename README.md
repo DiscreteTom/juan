@@ -45,7 +45,7 @@ A self-hosted bridge that allows you to interact with ACP-compatible coding agen
 anywhere init
 
 # Run with default config file (anywhere.toml)
-anywhere
+anywhere run
 ```
 
 ## Interacting with Agents
