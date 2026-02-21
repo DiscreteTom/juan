@@ -25,6 +25,7 @@ A self-hosted bridge that allows you to interact with ACP-compatible coding agen
      - `channels:history` - View messages in public channels
      - `groups:history` - View messages in private channels
      - `im:history` - View messages in direct messages
+     - `files:write` - Upload files and share them
    - Install the app to your workspace
    - Copy the Bot User OAuth Token (starts with `xoxb-`)
 4. Enable Events:

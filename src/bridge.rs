@@ -107,81 +107,111 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             matches!(item, agent_client_protocol::ToolCallContent::Diff(_))
                         });
 
-                        let input_str = if has_diff {
-                            String::new()
-                        } else {
+                        // Prepare YAML input if needed
+                        let input_yaml = if !has_diff {
                             tool_call
                                 .raw_input
                                 .as_ref()
                                 .and_then(|v| serde_yaml_ng::to_string(v).ok())
-                                .map(|yaml| {
-                                    let ticks = crate::utils::safe_backticks(&yaml);
-                                    format!("\nInput: \n{}\n{}\n{}", ticks, yaml, ticks)
-                                })
-                                .unwrap_or_default()
+                        } else {
+                            None
                         };
 
-                        let mut msg = format!("🔧 Tool: {}{}", tool_call.title, input_str);
-
-                        // Render content if present
-                        for item in &tool_call.content {
-                            match item {
-                                agent_client_protocol::ToolCallContent::Diff(diff) => {
-                                    // Generate unified diff format
-                                    let diff_text = if let Some(old_text) = &diff.old_text {
-                                        format!(
-                                            "--- {}\n+++ {}\n{}",
-                                            diff.path.display(),
-                                            diff.path.display(),
-                                            generate_unified_diff(old_text, &diff.new_text)
-                                        )
-                                    } else {
-                                        // New file
-                                        format!(
-                                            "--- /dev/null\n+++ {}\n{}",
-                                            diff.path.display(),
-                                            diff.new_text
-                                                .lines()
-                                                .map(|line| format!("+{}", line))
-                                                .collect::<Vec<_>>()
-                                                .join("\n")
-                                        )
-                                    };
-                                    let ticks = crate::utils::safe_backticks(&diff_text);
-                                    msg.push_str(&format!(
-                                        "\nOutput:\n{}\n{}\n{}",
-                                        ticks, diff_text, ticks
-                                    ));
-                                }
-                                _ => {
-                                    let content_str = format!("{:?}", item);
-                                    let ticks = crate::utils::safe_backticks(&content_str);
-                                    msg.push_str(&format!(
-                                        "\nOutput:\n{}\n{}\n{}",
-                                        ticks, content_str, ticks
-                                    ));
-                                }
-                            }
-                        }
+                        let msg = format!("🔧 Tool: {}", tool_call.title);
 
                         let tool_call_id = tool_call.tool_call_id.to_string();
                         let mut tool_messages = tool_messages_clone.write().await;
 
-                        if let Some((channel, ts, _)) = tool_messages.get(&tool_call_id).cloned() {
+                        // Send or update message first to get timestamp
+                        let msg_ts = if let Some((channel, ts, _)) =
+                            tool_messages.get(&tool_call_id).cloned()
+                        {
                             // Update existing message
                             let _ = slack_clone.update_message(&channel, &ts, &msg).await;
-                            tool_messages.insert(tool_call_id, (channel, ts, tool_call));
+                            tool_messages.insert(
+                                tool_call_id.clone(),
+                                (channel, ts.clone(), tool_call.clone()),
+                            );
+                            ts
                         } else {
                             // Send new message
                             drop(tool_messages);
-                            if let Ok(ts) = slack_clone
+                            match slack_clone
                                 .send_message(&session.channel, Some(&thread_key), &msg)
                                 .await
                             {
-                                tool_messages_clone
-                                    .write()
+                                Ok(ts) => {
+                                    tool_messages_clone.write().await.insert(
+                                        tool_call_id.clone(),
+                                        (session.channel.clone(), ts.clone(), tool_call.clone()),
+                                    );
+                                    ts
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to send message: {}", e);
+                                    continue;
+                                }
+                            }
+                        };
+
+                        // Now upload files to the message
+                        if let Some(yaml_content) = input_yaml {
+                            if let Err(e) = slack_clone
+                                .upload_file(
+                                    &session.channel,
+                                    Some(&msg_ts),
+                                    &yaml_content,
+                                    "input.yaml",
+                                    "yaml",
+                                    Some("Input"),
+                                )
+                                .await
+                            {
+                                tracing::error!("Failed to upload YAML file: {}", e);
+                            }
+                        }
+
+                        // Upload diff files
+                        for item in &tool_call.content {
+                            if let agent_client_protocol::ToolCallContent::Diff(diff) = item {
+                                let diff_text = if let Some(old_text) = &diff.old_text {
+                                    format!(
+                                        "--- {}\n+++ {}\n{}",
+                                        diff.path.display(),
+                                        diff.path.display(),
+                                        generate_unified_diff(old_text, &diff.new_text)
+                                    )
+                                } else {
+                                    format!(
+                                        "--- /dev/null\n+++ {}\n{}",
+                                        diff.path.display(),
+                                        diff.new_text
+                                            .lines()
+                                            .map(|line| format!("+{}", line))
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    )
+                                };
+                                let filename = format!(
+                                    "{}.diff",
+                                    diff.path
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("file")
+                                );
+                                if let Err(e) = slack_clone
+                                    .upload_file(
+                                        &session.channel,
+                                        Some(&msg_ts),
+                                        &diff_text,
+                                        &filename,
+                                        "diff",
+                                        Some("Output"),
+                                    )
                                     .await
-                                    .insert(tool_call_id, (session.channel.clone(), ts, tool_call));
+                                {
+                                    tracing::error!("Failed to upload diff file: {}", e);
+                                }
                             }
                         }
                     }
@@ -203,85 +233,13 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     .await
                                     .remove(&update.tool_call_id.to_string())
                                 {
-                                    // Check if there's a diff in content
-                                    let has_diff = tool_call.content.iter().any(|item| {
-                                        matches!(
-                                            item,
-                                            agent_client_protocol::ToolCallContent::Diff(_)
-                                        )
-                                    });
-
-                                    let input_str = if has_diff {
-                                        String::new()
-                                    } else {
-                                        tool_call
-                                            .raw_input
-                                            .as_ref()
-                                            .and_then(|v| serde_yaml_ng::to_string(v).ok())
-                                            .map(|yaml| {
-                                                let ticks = crate::utils::safe_backticks(&yaml);
-                                                format!("\nInput: \n{}\n{}\n{}", ticks, yaml, ticks)
-                                            })
-                                            .unwrap_or_default()
-                                    };
-
                                     let status_emoji = match status {
                                         agent_client_protocol::ToolCallStatus::Completed => "✅",
                                         agent_client_protocol::ToolCallStatus::Failed => "❌",
                                         _ => unreachable!(),
                                     };
 
-                                    let mut msg = format!(
-                                        "{} Tool: {}{}",
-                                        status_emoji, tool_call.title, input_str
-                                    );
-
-                                    // Render content from original tool call
-                                    for item in &tool_call.content {
-                                        match item {
-                                            agent_client_protocol::ToolCallContent::Diff(diff) => {
-                                                // Generate unified diff format
-                                                let diff_text =
-                                                    if let Some(old_text) = &diff.old_text {
-                                                        format!(
-                                                            "--- {}\n+++ {}\n{}",
-                                                            diff.path.display(),
-                                                            diff.path.display(),
-                                                            generate_unified_diff(
-                                                                old_text,
-                                                                &diff.new_text
-                                                            )
-                                                        )
-                                                    } else {
-                                                        // New file
-                                                        format!(
-                                                            "--- /dev/null\n+++ {}\n{}",
-                                                            diff.path.display(),
-                                                            diff.new_text
-                                                                .lines()
-                                                                .map(|line| format!("+{}", line))
-                                                                .collect::<Vec<_>>()
-                                                                .join("\n")
-                                                        )
-                                                    };
-                                                let ticks =
-                                                    crate::utils::safe_backticks(&diff_text);
-                                                msg.push_str(&format!(
-                                                    "\nOutput:\n{}\n{}\n{}",
-                                                    ticks, diff_text, ticks
-                                                ));
-                                            }
-                                            _ => {
-                                                let content_str = format!("{:?}", item);
-                                                let ticks =
-                                                    crate::utils::safe_backticks(&content_str);
-                                                msg.push_str(&format!(
-                                                    "\nOutput:\n{}\n{}\n{}",
-                                                    ticks, content_str, ticks
-                                                ));
-                                            }
-                                        }
-                                    }
+                                    let msg = format!("{} Tool: {}", status_emoji, tool_call.title);
 
                                     let _ = slack_clone.update_message(&channel, &ts, &msg).await;
                                 }

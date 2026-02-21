@@ -140,6 +140,66 @@ impl SlackConnection {
 
         Ok(())
     }
+
+    /// Uploads a file/snippet to Slack with syntax highlighting.
+    /// The filetype determines the syntax highlighting (e.g., "diff", "yaml", "python").
+    pub async fn upload_file(
+        &self,
+        channel: &str,
+        thread_ts: Option<&str>,
+        content: &str,
+        filename: &str,
+        _filetype: &str,
+        title: Option<&str>,
+    ) -> Result<()> {
+        debug!(
+            "Uploading file to channel={}, thread_ts={:?}, filename={}",
+            channel, thread_ts, filename
+        );
+        let session = self.client.open_session(&self.bot_token);
+
+        // Step 1: Get upload URL
+        let get_url_req =
+            SlackApiFilesGetUploadUrlExternalRequest::new(filename.into(), content.len());
+        let url_resp = session
+            .get_upload_url_external(&get_url_req)
+            .await
+            .context("Failed to get upload URL")?;
+
+        // Step 2: Upload file to the URL
+        let client = reqwest::Client::new();
+        client
+            .post(url_resp.upload_url.0.as_str())
+            .body(content.to_string())
+            .send()
+            .await
+            .context("Failed to upload file content")?;
+
+        // Step 3: Complete the upload
+        let mut file_complete = SlackApiFilesComplete::new(url_resp.file_id);
+        if let Some(title) = title {
+            file_complete = file_complete.with_title(title.into());
+        }
+
+        let mut complete_req = SlackApiFilesCompleteUploadExternalRequest::new(vec![file_complete]);
+
+        if let Some(ts) = thread_ts {
+            complete_req = complete_req
+                .with_channel_id(channel.into())
+                .with_thread_ts(ts.into());
+        } else {
+            complete_req = complete_req.with_channel_id(channel.into());
+        }
+
+        let resp = session
+            .files_complete_upload_external(&complete_req)
+            .await
+            .context("Failed to complete file upload")?;
+
+        debug!("File uploaded successfully: {:?}", resp);
+
+        Ok(())
+    }
 }
 
 /// Callback handler for Slack push events (messages, mentions, etc.).
