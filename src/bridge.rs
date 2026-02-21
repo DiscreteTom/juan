@@ -116,7 +116,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 .and_then(|v| serde_yaml_ng::to_string(v).ok())
                                 .map(|yaml| {
                                     let ticks = crate::utils::safe_backticks(&yaml);
-                                    format!("\nInput: \n{}yaml\n{}\n{}", ticks, yaml, ticks)
+                                    format!("\nInput: \n{}\n{}\n{}", ticks, yaml, ticks)
                                 })
                                 .unwrap_or_default()
                         };
@@ -149,7 +149,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     };
                                     let ticks = crate::utils::safe_backticks(&diff_text);
                                     msg.push_str(&format!(
-                                        "\nOutput:\n{}diff\n{}\n{}",
+                                        "\nOutput:\n{}\n{}\n{}",
                                         ticks, diff_text, ticks
                                     ));
                                 }
@@ -220,10 +220,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                             .and_then(|v| serde_yaml_ng::to_string(v).ok())
                                             .map(|yaml| {
                                                 let ticks = crate::utils::safe_backticks(&yaml);
-                                                format!(
-                                                    "\nInput: \n{}yaml\n{}\n{}",
-                                                    ticks, yaml, ticks
-                                                )
+                                                format!("\nInput: \n{}\n{}\n{}", ticks, yaml, ticks)
                                             })
                                             .unwrap_or_default()
                                     };
@@ -270,7 +267,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                                 let ticks =
                                                     crate::utils::safe_backticks(&diff_text);
                                                 msg.push_str(&format!(
-                                                    "\nOutput:\n{}diff\n{}\n{}",
+                                                    "\nOutput:\n{}\n{}\n{}",
                                                     ticks, diff_text, ticks
                                                 ));
                                             }
