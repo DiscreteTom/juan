@@ -1,38 +1,57 @@
 use anyhow::{Context, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use toml_scaffold::TomlScaffold;
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+/// Config for [anywhere](https://github.com/DiscreteTom/anywhere)
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, TomlScaffold)]
 pub struct Config {
+    /// Slack workspace connection settings
     pub slack: SlackConfig,
+    /// Bridge behavior settings
     pub bridge: BridgeConfig,
+    /// List of configured agents
     pub agents: Vec<AgentConfig>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+/// Slack connection configuration
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, TomlScaffold)]
 pub struct SlackConfig {
+    /// Bot User OAuth Token (starts with xoxb-)
     pub bot_token: String,
+    /// App-level token for Socket Mode (starts with xapp-)
     pub app_token: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+/// Bridge behavior configuration
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, TomlScaffold)]
 pub struct BridgeConfig {
+    /// Default workspace path for agents
     pub default_workspace: String,
-    #[serde(default)]
+    /// Global auto-approve setting for tool calls
     pub auto_approve: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+/// Agent configuration
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, TomlScaffold)]
 pub struct AgentConfig {
+    /// Unique identifier for the agent
     pub name: String,
+    /// Human-readable description
+    pub description: String,
+    /// Path to the agent executable
     pub command: String,
+    /// Command-line arguments for the agent
     #[serde(default)]
     pub args: Vec<String>,
-    pub description: String,
-    pub auto_approve: Option<bool>,
+    /// Environment variables for the agent
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Override global auto-approve for this agent
+    #[serde(default)]
+    pub auto_approve: bool,
 }
 
 impl Config {

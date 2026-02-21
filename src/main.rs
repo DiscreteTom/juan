@@ -19,6 +19,10 @@ async fn main() -> Result<()> {
         .with_env_filter(args.log_level)
         .init();
 
+    if let Some(cli::Command::Init { config, r#override }) = args.command {
+        return handle_init(&config, r#override);
+    }
+
     info!("Loading configuration from: {}", args.config);
     let config = Arc::new(config::Config::load(&args.config)?);
 
@@ -88,5 +92,41 @@ async fn main() -> Result<()> {
         .await;
     }
 
+    Ok(())
+}
+
+fn handle_init(output: &str, override_existing: bool) -> Result<()> {
+    use std::collections::HashMap;
+    use toml_scaffold::TomlScaffold;
+
+    if !override_existing && std::path::Path::new(output).exists() {
+        anyhow::bail!(
+            "File already exists: {}. Use --override to overwrite.",
+            output
+        );
+    }
+
+    let config = config::Config {
+        slack: config::SlackConfig {
+            bot_token: "xoxb-your-bot-token".to_string(),
+            app_token: "xapp-your-app-token".to_string(),
+        },
+        bridge: config::BridgeConfig {
+            default_workspace: "~".to_string(),
+            auto_approve: false,
+        },
+        agents: vec![config::AgentConfig {
+            name: "kiro".to_string(),
+            description: "Kiro CLI - https://kiro.dev/cli/".to_string(),
+            command: "kiro-cli".to_string(),
+            args: vec!["acp".into()],
+            env: HashMap::new(),
+            auto_approve: false,
+        }],
+    };
+
+    let scaffold = config.to_scaffold()?;
+    std::fs::write(output, scaffold)?;
+    println!("Config scaffold written to: {}", output);
     Ok(())
 }

@@ -42,9 +42,7 @@ impl SessionManager {
             .find(|a| a.name == agent_name)
             .ok_or_else(|| anyhow::anyhow!("Agent not found: {}", agent_name))?;
 
-        let auto_approve = agent_config
-            .auto_approve
-            .unwrap_or(self.config.bridge.auto_approve);
+        let auto_approve = agent_config.auto_approve;
 
         let session_id = SessionId::from(format!("session-{}", thread_key));
 
