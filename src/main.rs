@@ -23,20 +23,28 @@ use tracing::info;
 async fn main() -> Result<()> {
     let args = cli::Args::parse();
 
-    // Initialize logging with the specified level
-    tracing_subscriber::fmt()
-        .with_env_filter(args.log_level)
-        .init();
+    match args.command {
+        cli::Command::Init { config, r#override } => {
+            return handle_init(&config, r#override);
+        }
+        cli::Command::Run { config, log_level } => {
+            // Initialize logging with the specified level
+            tracing_subscriber::fmt()
+                .with_env_filter(log_level)
+                .init();
 
-    // Handle init subcommand separately (generates config file and exits)
-    if let Some(cli::Command::Init { config, r#override }) = args.command {
-        return handle_init(&config, r#override);
+            info!("Loading configuration from: {}", config);
+            let config = Arc::new(config::Config::load(&config)?);
+
+            info!("Configuration loaded successfully");
+            run_bridge(config).await?;
+        }
     }
 
-    info!("Loading configuration from: {}", args.config);
-    let config = Arc::new(config::Config::load(&args.config)?);
+    Ok(())
+}
 
-    info!("Configuration loaded successfully");
+async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     info!("Slack bot configured");
     info!("Default workspace: {}", config.bridge.default_workspace);
     info!("Auto-approve: {}", config.bridge.auto_approve);

@@ -8,17 +8,8 @@ use clap::{Parser, Subcommand};
 #[command(name = "anywhere")]
 #[command(about = "Chat-to-ACP Bridge", long_about = None)]
 pub struct Args {
-    /// Optional subcommand (e.g., init)
     #[command(subcommand)]
-    pub command: Option<Command>,
-
-    /// Path to the configuration file
-    #[arg(long, default_value = "anywhere.toml")]
-    pub config: String,
-
-    /// Logging level (trace, debug, info, warn, error)
-    #[arg(long, default_value = "info")]
-    pub log_level: String,
+    pub command: Command,
 }
 
 /// Available subcommands for the CLI
@@ -32,5 +23,15 @@ pub enum Command {
         /// Override existing file
         #[arg(long)]
         r#override: bool,
+    },
+    /// Run the bridge
+    Run {
+        /// Path to the configuration file
+        #[arg(long, default_value = "anywhere.toml")]
+        config: String,
+
+        /// Logging level (trace, debug, info, warn, error)
+        #[arg(long, default_value = "info")]
+        log_level: String,
     },
 }
