@@ -6,13 +6,13 @@
 /// 3. Initializing managers (agent, session)
 /// 4. Connecting to Slack
 /// 5. Processing events in the main loop
-mod agent_manager;
+mod agent;
 mod bridge;
 mod cli;
 mod config;
-mod message_handler;
-mod session_manager;
-mod slack_client;
+mod handler;
+mod session;
+mod slack;
 
 use anyhow::Result;
 use clap::Parser;

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, info, trace};
 
-use crate::{agent_manager, config, message_handler, session_manager, slack_client};
+use crate::{agent, config, handler, session, slack};
 
 /// Shared message buffer for accumulating agent message chunks
 pub type MessageBuffers = Arc<RwLock<HashMap<SessionId, String>>>;
@@ -25,17 +25,15 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
     // Create channel for agent notifications (agent -> main loop)
     let (notification_tx, mut notification_rx) = mpsc::unbounded_channel();
-    let agent_manager = Arc::new(agent_manager::AgentManager::new(notification_tx));
+    let agent_manager = Arc::new(agent::AgentManager::new(notification_tx));
     info!("Agent manager initialized (agents will spawn on-demand)");
 
     // Create session manager to track Slack thread -> agent session mappings
-    let session_manager = Arc::new(session_manager::SessionManager::new(config.clone()));
+    let session_manager = Arc::new(session::SessionManager::new(config.clone()));
     info!("Session manager initialized");
 
     // Create Slack client and event channel (Slack -> main loop)
-    let slack = Arc::new(slack_client::SlackConnection::new(
-        config.slack.bot_token.clone(),
-    ));
+    let slack = Arc::new(slack::SlackConnection::new(config.slack.bot_token.clone()));
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
     // Create shared message buffers for accumulating chunks
@@ -130,7 +128,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     info!("Entering main event loop");
     while let Some(event) = event_rx.recv().await {
         debug!("Processing event from main loop");
-        message_handler::handle_event(
+        handler::handle_event(
             event,
             slack.clone(),
             config.clone(),

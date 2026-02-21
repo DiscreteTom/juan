@@ -4,7 +4,7 @@
 /// - Shell commands (starting with !)
 /// - Bot commands (starting with #)
 /// - Regular messages to agents
-use crate::{agent_manager, bridge, config, session_manager, slack_client};
+use crate::{agent, bridge, config, session, slack};
 use std::sync::Arc;
 use tokio::process::Command;
 use tracing::{debug, trace};
@@ -12,24 +12,24 @@ use tracing::{debug, trace};
 /// Main entry point for handling Slack events.
 /// Routes events to appropriate handlers based on message content.
 pub async fn handle_event(
-    event: slack_client::SlackEvent,
-    slack: Arc<slack_client::SlackConnection>,
+    event: slack::SlackEvent,
+    slack: Arc<slack::SlackConnection>,
     config: Arc<config::Config>,
-    agent_manager: Arc<agent_manager::AgentManager>,
-    session_manager: Arc<session_manager::SessionManager>,
+    agent_manager: Arc<agent::AgentManager>,
+    session_manager: Arc<session::SessionManager>,
     message_buffers: bridge::MessageBuffers,
 ) {
     tracing::info!("Received event: {:?}", event);
 
     match event {
-        slack_client::SlackEvent::Message {
+        slack::SlackEvent::Message {
             channel,
             ts,
             thread_ts,
             text,
             ..
         }
-        | slack_client::SlackEvent::AppMention {
+        | slack::SlackEvent::AppMention {
             channel,
             ts,
             thread_ts,
@@ -96,10 +96,10 @@ async fn handle_command(
     channel: &str,
     ts: &str,
     thread_ts: Option<&str>,
-    slack: Arc<slack_client::SlackConnection>,
+    slack: Arc<slack::SlackConnection>,
     config: Arc<config::Config>,
-    agent_manager: Arc<agent_manager::AgentManager>,
-    session_manager: Arc<session_manager::SessionManager>,
+    agent_manager: Arc<agent::AgentManager>,
+    session_manager: Arc<session::SessionManager>,
 ) -> bool {
     let parts: Vec<&str> = text.trim().split_whitespace().collect();
     let command = parts[0];
@@ -278,9 +278,9 @@ async fn handle_message(
     text: &str,
     channel: &str,
     thread_ts: Option<&str>,
-    slack: Arc<slack_client::SlackConnection>,
-    agent_manager: Arc<agent_manager::AgentManager>,
-    session_manager: Arc<session_manager::SessionManager>,
+    slack: Arc<slack::SlackConnection>,
+    agent_manager: Arc<agent::AgentManager>,
+    session_manager: Arc<session::SessionManager>,
     message_buffers: bridge::MessageBuffers,
 ) {
     let thread_key = thread_ts.unwrap_or(channel);
@@ -381,8 +381,8 @@ async fn handle_shell_command(
     text: &str,
     channel: &str,
     thread_ts: Option<&str>,
-    slack: Arc<slack_client::SlackConnection>,
-    session_manager: Arc<session_manager::SessionManager>,
+    slack: Arc<slack::SlackConnection>,
+    session_manager: Arc<session::SessionManager>,
 ) {
     let cmd = text.trim().strip_prefix('!').unwrap_or("").trim();
     debug!("Executing shell command: {}", cmd);
