@@ -111,14 +111,26 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             })
                             .unwrap_or_default();
                         let msg = format!("🔧 Tool: {}{}", tool_call.title, input_str);
-                        if let Ok(ts) = slack_clone
-                            .send_message(&session.channel, Some(&thread_key), &msg)
-                            .await
-                        {
-                            tool_messages_clone.write().await.insert(
-                                tool_call.tool_call_id.to_string(),
-                                (session.channel.clone(), ts, tool_call),
-                            );
+
+                        let tool_call_id = tool_call.tool_call_id.to_string();
+                        let mut tool_messages = tool_messages_clone.write().await;
+
+                        if let Some((channel, ts, _)) = tool_messages.get(&tool_call_id).cloned() {
+                            // Update existing message
+                            let _ = slack_clone.update_message(&channel, &ts, &msg).await;
+                            tool_messages.insert(tool_call_id, (channel, ts, tool_call));
+                        } else {
+                            // Send new message
+                            drop(tool_messages);
+                            if let Ok(ts) = slack_clone
+                                .send_message(&session.channel, Some(&thread_key), &msg)
+                                .await
+                            {
+                                tool_messages_clone
+                                    .write()
+                                    .await
+                                    .insert(tool_call_id, (session.channel.clone(), ts, tool_call));
+                            }
                         }
                     }
                     agent_client_protocol::SessionUpdate::ToolCallUpdate(update) => {
