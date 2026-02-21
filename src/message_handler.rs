@@ -4,7 +4,7 @@
 /// - Shell commands (starting with !)
 /// - Bot commands (starting with #)
 /// - Regular messages to agents
-use crate::{agent_manager, config, session_manager, slack_client};
+use crate::{agent_manager, bridge, config, session_manager, slack_client};
 use std::sync::Arc;
 use tokio::process::Command;
 use tracing::{debug, trace};
@@ -17,6 +17,7 @@ pub async fn handle_event(
     config: Arc<config::Config>,
     agent_manager: Arc<agent_manager::AgentManager>,
     session_manager: Arc<session_manager::SessionManager>,
+    message_buffers: bridge::MessageBuffers,
 ) {
     tracing::info!("Received event: {:?}", event);
 
@@ -67,6 +68,7 @@ pub async fn handle_event(
                 slack,
                 agent_manager,
                 session_manager,
+                message_buffers,
             )
             .await;
         }
@@ -163,7 +165,12 @@ async fn handle_command(
                 ts, agent_name
             );
             match session_manager
-                .create_session(ts.to_string(), agent_name.to_string(), workspace)
+                .create_session(
+                    ts.to_string(),
+                    agent_name.to_string(),
+                    workspace,
+                    channel.to_string(),
+                )
                 .await
             {
                 Ok(_) => {
@@ -267,6 +274,7 @@ async fn handle_message(
     slack: Arc<slack_client::SlackConnection>,
     agent_manager: Arc<agent_manager::AgentManager>,
     session_manager: Arc<session_manager::SessionManager>,
+    message_buffers: bridge::MessageBuffers,
 ) {
     let thread_key = thread_ts.unwrap_or(channel);
     debug!(
@@ -341,8 +349,15 @@ async fn handle_message(
     // Send prompt to agent - response will stream via notifications
     match agent_manager.prompt(&session.agent_name, prompt_req).await {
         Ok(resp) => {
-            // Just log completion, actual messages already sent via notifications
+            // Prompt completed - flush any buffered message chunks
             tracing::info!("Prompt completed with stop_reason: {:?}", resp.stop_reason);
+
+            if let Some(buffer) = message_buffers.write().await.remove(&session.session_id) {
+                if !buffer.is_empty() {
+                    debug!("Flushing {} chars from message buffer", buffer.len());
+                    let _ = slack.send_message(channel, thread_ts, &buffer).await;
+                }
+            }
         }
         Err(e) => {
             tracing::error!("Failed to send prompt: {}", e);

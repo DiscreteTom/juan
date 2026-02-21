@@ -35,6 +35,8 @@ pub struct SessionState {
     pub workspace: String,
     /// Whether to auto-approve tool calls for this session
     pub auto_approve: bool,
+    /// Slack channel ID where this session is active
+    pub channel: String,
 }
 
 impl SessionManager {
@@ -52,11 +54,13 @@ impl SessionManager {
     /// * `thread_key` - Slack thread_ts (or channel if not in thread)
     /// * `agent_name` - Name of the agent to use
     /// * `workspace` - Optional workspace path (uses default if not provided)
+    /// * `channel` - Slack channel ID
     pub async fn create_session(
         &self,
         thread_key: String,
         agent_name: String,
         workspace: Option<String>,
+        channel: String,
     ) -> Result<SessionState> {
         debug!(
             "Creating session: thread_key={}, agent={}, workspace={:?}",
@@ -82,6 +86,7 @@ impl SessionManager {
             agent_name,
             workspace,
             auto_approve,
+            channel,
         };
 
         self.sessions
@@ -149,6 +154,7 @@ impl Clone for SessionState {
             agent_name: self.agent_name.clone(),
             workspace: self.workspace.clone(),
             auto_approve: self.auto_approve,
+            channel: self.channel.clone(),
         }
     }
 }

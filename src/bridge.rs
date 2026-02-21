@@ -1,9 +1,14 @@
+use agent_client_protocol::SessionId;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, info, trace};
 
 use crate::{agent_manager, config, message_handler, session_manager, slack_client};
+
+/// Shared message buffer for accumulating agent message chunks
+pub type MessageBuffers = Arc<RwLock<HashMap<SessionId, String>>>;
 
 pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     info!("Slack bot configured");
@@ -33,41 +38,55 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     ));
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
+    // Create shared message buffers for accumulating chunks
+    let message_buffers: MessageBuffers = Arc::new(RwLock::new(HashMap::new()));
+
     // Spawn task to handle agent notifications and forward to Slack
     let slack_clone = slack.clone();
     let session_manager_clone = session_manager.clone();
+    let buffers_clone = message_buffers.clone();
     tokio::spawn(async move {
         debug!("Agent notification handler started");
+
         while let Some((agent_name, notification)) = notification_rx.recv().await {
             trace!(
                 "Received notification from agent {}: session={}",
                 agent_name, notification.session_id
             );
+
             // Find the Slack thread for this session
-            let thread_key = session_manager_clone
+            let session_info = session_manager_clone
                 .list_sessions()
                 .await
                 .into_iter()
-                .find(|(_, session)| session.session_id == notification.session_id)
-                .map(|(key, _)| key);
+                .find(|(_, session)| session.session_id == notification.session_id);
 
-            if let Some(thread_key) = thread_key {
+            if let Some((thread_key, session)) = session_info {
                 debug!(
                     "Found thread_key {} for session {}",
                     thread_key, notification.session_id
                 );
+
                 match notification.update {
                     agent_client_protocol::SessionUpdate::AgentMessageChunk(chunk) => {
                         if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
-                            let _ = slack_clone
-                                .send_message(&thread_key, None, &text.text)
-                                .await;
+                            // Buffer the chunk
+                            buffers_clone
+                                .write()
+                                .await
+                                .entry(notification.session_id.clone())
+                                .or_insert_with(String::new)
+                                .push_str(&text.text);
                         }
                     }
                     agent_client_protocol::SessionUpdate::AgentThoughtChunk(chunk) => {
                         if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
                             let _ = slack_clone
-                                .send_message(&thread_key, None, &format!("💭 {}", text.text))
+                                .send_message(
+                                    &session.channel,
+                                    Some(&thread_key),
+                                    &format!("💭 {}", text.text),
+                                )
                                 .await;
                         }
                     }
@@ -78,13 +97,17 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             .and_then(|v| serde_json::to_string_pretty(v).ok())
                             .unwrap_or_else(|| "N/A".to_string());
                         let msg = format!("🔧 Tool: {}\nInput: {}", tool_call.title, input_str);
-                        let _ = slack_clone.send_message(&thread_key, None, &msg).await;
+                        let _ = slack_clone
+                            .send_message(&session.channel, Some(&thread_key), &msg)
+                            .await;
                     }
                     agent_client_protocol::SessionUpdate::ToolCallUpdate(update) => {
                         if let Some(status) = update.fields.status {
                             let msg =
                                 format!("🔧 Tool {} status: {:?}", update.tool_call_id, status);
-                            let _ = slack_clone.send_message(&thread_key, None, &msg).await;
+                            let _ = slack_clone
+                                .send_message(&session.channel, Some(&thread_key), &msg)
+                                .await;
                         }
                     }
                     _ => {}
@@ -113,6 +136,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
             config.clone(),
             agent_manager.clone(),
             session_manager.clone(),
+            message_buffers.clone(),
         )
         .await;
     }
