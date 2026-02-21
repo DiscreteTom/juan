@@ -11,7 +11,8 @@ use crate::{agent, config, handler, session, slack};
 pub type MessageBuffers = Arc<RwLock<HashMap<SessionId, String>>>;
 
 /// Shared map for tracking tool call message timestamps
-pub type ToolCallMessages = Arc<RwLock<HashMap<String, (String, String)>>>; // tool_call_id -> (channel, ts)
+pub type ToolCallMessages =
+    Arc<RwLock<HashMap<String, (String, String, agent_client_protocol::ToolCall)>>>; // tool_call_id -> (channel, ts, tool_call)
 
 pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     info!("Slack bot configured");
@@ -96,36 +97,82 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                         }
                     }
                     agent_client_protocol::SessionUpdate::ToolCall(tool_call) => {
+                        trace!(
+                            "ToolCall: id={}, title={}, kind={:?}",
+                            tool_call.tool_call_id, tool_call.title, tool_call.kind
+                        );
                         let input_str = tool_call
                             .raw_input
                             .as_ref()
                             .and_then(|v| serde_yaml_ng::to_string(v).ok())
                             .map(|yaml| {
                                 let ticks = crate::utils::safe_backticks(&yaml);
-                                format!("{}yaml\n{}\n{}", ticks, yaml, ticks)
+                                format!("\nInput: \n{}yaml\n{}\n{}", ticks, yaml, ticks)
                             })
-                            .unwrap_or_else(|| "N/A".to_string());
-                        let msg = format!("🔧 Tool: {}\nInput: {}", tool_call.title, input_str);
+                            .unwrap_or_default();
+                        let msg = format!("🔧 Tool: {}{}", tool_call.title, input_str);
                         if let Ok(ts) = slack_clone
                             .send_message(&session.channel, Some(&thread_key), &msg)
                             .await
                         {
                             tool_messages_clone.write().await.insert(
                                 tool_call.tool_call_id.to_string(),
-                                (session.channel.clone(), ts),
+                                (session.channel.clone(), ts, tool_call),
                             );
                         }
                     }
                     agent_client_protocol::SessionUpdate::ToolCallUpdate(update) => {
+                        trace!(
+                            "ToolCallUpdate: id={}, status={:?}, content={:?}",
+                            update.tool_call_id, update.fields.status, update.fields.content
+                        );
                         if let Some(status) = update.fields.status {
-                            if matches!(status, agent_client_protocol::ToolCallStatus::Completed) {
-                                if let Some((channel, ts)) = tool_messages_clone
+                            let is_terminal = matches!(
+                                status,
+                                agent_client_protocol::ToolCallStatus::Completed
+                                    | agent_client_protocol::ToolCallStatus::Failed
+                            );
+
+                            if is_terminal {
+                                if let Some((channel, ts, tool_call)) = tool_messages_clone
                                     .write()
                                     .await
                                     .remove(&update.tool_call_id.to_string())
                                 {
-                                    let msg =
-                                        format!("🔧 Tool {} - ✅ Completed", update.tool_call_id);
+                                    let input_str = tool_call
+                                        .raw_input
+                                        .as_ref()
+                                        .and_then(|v| serde_yaml_ng::to_string(v).ok())
+                                        .map(|yaml| {
+                                            let ticks = crate::utils::safe_backticks(&yaml);
+                                            format!("\nInput: \n{}yaml\n{}\n{}", ticks, yaml, ticks)
+                                        })
+                                        .unwrap_or_default();
+
+                                    let status_icon = match status {
+                                        agent_client_protocol::ToolCallStatus::Completed => {
+                                            "✅ Completed"
+                                        }
+                                        agent_client_protocol::ToolCallStatus::Failed => {
+                                            "❌ Failed"
+                                        }
+                                        _ => unreachable!(),
+                                    };
+
+                                    let mut msg = format!(
+                                        "🔧 Tool: {} - {}{}",
+                                        tool_call.title, status_icon, input_str
+                                    );
+
+                                    if let Some(content) = &update.fields.content {
+                                        let content_str = format!("{:?}", content);
+                                        let ticks = crate::utils::safe_backticks(&content_str);
+                                        msg.push_str(&format!(
+                                            "\nOutput:\n{}\n{}\n{}",
+                                            ticks, content_str, ticks
+                                        ));
+                                    }
+
                                     let _ = slack_clone.update_message(&channel, &ts, &msg).await;
                                 }
                             }
