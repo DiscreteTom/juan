@@ -71,3 +71,5 @@ Messages starting with `!` will execute shell commands:
 - `!git status` - Run any shell command
 
 The output (stdout and stderr) will be sent back to Slack in a code block.
+
+## [CHANGELOG](./CHANGELOG.md)
