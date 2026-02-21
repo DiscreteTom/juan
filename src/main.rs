@@ -97,12 +97,14 @@ async fn main() -> Result<()> {
         match event {
             slack_client::SlackEvent::Message {
                 channel,
+                ts,
                 thread_ts,
                 text,
                 ..
             }
             | slack_client::SlackEvent::AppMention {
                 channel,
+                ts,
                 thread_ts,
                 text,
                 ..
@@ -129,7 +131,7 @@ async fn main() -> Result<()> {
                                 let _ = slack
                                     .send_message(
                                         &channel,
-                                        None,
+                                        Some(&ts),
                                         "Usage: #agent <agent_name> [workspace_path]",
                                     )
                                     .await;
@@ -156,7 +158,7 @@ async fn main() -> Result<()> {
                                             let _ = slack
                                                 .send_message(
                                                     &channel,
-                                                    None,
+                                                    Some(&ts),
                                                     &format!("Failed to spawn agent: {}", e),
                                                 )
                                                 .await;
@@ -167,7 +169,7 @@ async fn main() -> Result<()> {
                                     let _ = slack
                                         .send_message(
                                             &channel,
-                                            None,
+                                            Some(&ts),
                                             &format!("Agent not found: {}", agent_name),
                                         )
                                         .await;
@@ -175,42 +177,17 @@ async fn main() -> Result<()> {
                                 }
                             }
 
-                            // Create session and start a thread
-                            let thread_ts = match slack
-                                .send_message(
-                                    &channel,
-                                    None,
-                                    &format!("Starting session with agent: {}", agent_name),
-                                )
-                                .await
-                            {
-                                Ok(ts) => ts,
-                                Err(e) => {
-                                    let _ = slack
-                                        .send_message(
-                                            &channel,
-                                            None,
-                                            &format!("Failed to send message: {}", e),
-                                        )
-                                        .await;
-                                    continue;
-                                }
-                            };
-
+                            // Reply to user's message to create a thread
                             match session_manager
-                                .create_session(
-                                    thread_ts.clone(),
-                                    agent_name.to_string(),
-                                    workspace,
-                                )
+                                .create_session(ts.clone(), agent_name.to_string(), workspace)
                                 .await
                             {
                                 Ok(_) => {
                                     let _ = slack
                                         .send_message(
                                             &channel,
-                                            Some(&thread_ts),
-                                            "Session started! Send messages in this thread to chat with the agent.",
+                                            Some(&ts),
+                                            &format!("Session started with agent: {}. Send messages in this thread to chat.", agent_name),
                                         )
                                         .await;
                                 }
@@ -218,7 +195,7 @@ async fn main() -> Result<()> {
                                     let _ = slack
                                         .send_message(
                                             &channel,
-                                            Some(&thread_ts),
+                                            Some(&ts),
                                             &format!("Failed to create session: {}", e),
                                         )
                                         .await;

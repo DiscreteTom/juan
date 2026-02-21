@@ -8,12 +8,14 @@ use tracing::{debug, info};
 pub enum SlackEvent {
     Message {
         channel: String,
+        ts: String,
         thread_ts: Option<String>,
         text: String,
         user: String,
     },
     AppMention {
         channel: String,
+        ts: String,
         thread_ts: Option<String>,
         text: String,
         user: String,
@@ -132,6 +134,7 @@ async fn handle_push_event(
                             .channel
                             .map(|c| c.to_string())
                             .unwrap_or_default(),
+                        ts: msg.origin.ts.to_string(),
                         thread_ts: msg.origin.thread_ts.map(|ts| ts.to_string()),
                         text,
                         user,
@@ -145,6 +148,7 @@ async fn handle_push_event(
 
             let _ = tx.send(SlackEvent::AppMention {
                 channel: mention.channel.to_string(),
+                ts: mention.origin.ts.to_string(),
                 thread_ts: mention.origin.thread_ts.map(|ts| ts.to_string()),
                 text,
                 user,
