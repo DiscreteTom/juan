@@ -507,6 +507,9 @@ async fn handle_message(
             // Prompt completed - flush any buffered message chunks
             tracing::info!("Prompt completed with stop_reason: {:?}", resp.stop_reason);
 
+            // TODO: optimize this - sleep to ensure all messages are collected
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
             if let Some(buffer) = message_buffers.write().await.remove(&session.session_id) {
                 if !buffer.is_empty() {
                     debug!("Flushing {} chars from message buffer", buffer.len());
