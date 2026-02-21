@@ -455,10 +455,25 @@ async fn handle_command(
                             }
                         }
                     } else {
-                        // Whole repo - send as text
-                        let ticks = crate::utils::safe_backticks(&diff);
-                        let msg = format!("{}\n{}\n{}", ticks, diff, ticks);
-                        let _ = slack.send_message(channel, thread_ts, &msg).await;
+                        // Whole repo - use file upload
+                        let msg = "📝 Diff: (whole repo)";
+                        match slack.send_message(channel, thread_ts, msg).await {
+                            Ok(ts) => {
+                                let _ = slack
+                                    .upload_file(
+                                        channel,
+                                        Some(&ts),
+                                        &diff,
+                                        "repo.diff",
+                                        "diff",
+                                        Some("Diff"),
+                                    )
+                                    .await;
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to send message: {}", e);
+                            }
+                        }
                     }
                 }
                 Err(e) => {
