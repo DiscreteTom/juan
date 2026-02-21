@@ -9,6 +9,16 @@ use std::sync::Arc;
 use tokio::process::Command;
 use tracing::{debug, trace};
 
+const HELP_MESSAGE: &str = "Available commands:
+• #help - Show this help message
+• #new <name> [workspace] - Start a new agent session in a thread
+• #agents - List available agents
+• #session - Show current agent session info
+• #end - End current agent session
+• #read <file_path> - Read local file content
+• #diff [file_path] - Show git diff
+• !<command> - Execute shell command";
+
 /// Main entry point for handling Slack events.
 /// Routes events to appropriate handlers based on message content.
 pub async fn handle_event(
@@ -184,7 +194,7 @@ async fn handle_command(
                         .send_message(
                             channel,
                             Some(ts),
-                            &format!("Session started with agent: {}. Send messages in this thread to chat.", agent_name),
+                            &format!("Session started with agent: {}. Send messages in this thread to chat.\n\n{}", agent_name, HELP_MESSAGE),
                         )
                         .await;
                 }
@@ -383,21 +393,7 @@ async fn handle_command(
             }
         }
         "#help" | _ => {
-            let _ = slack
-                .send_message(
-                    channel,
-                    thread_ts,
-                    "Available commands:\n\
-                    • #help - Show this help message\n\
-                    • #new <name> [workspace] - Start a new agent session in a thread\n\
-                    • #agents - List available agents\n\
-                    • #session - Show current agent session info\n\
-                    • #end - End current agent session\n\
-                    • #read <file_path> - Read local file content\n\
-                    • #diff [file_path] - Show git diff\n\
-                    • !<command> - Execute shell command",
-                )
-                .await;
+            let _ = slack.send_message(channel, thread_ts, HELP_MESSAGE).await;
         }
     }
 }
