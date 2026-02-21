@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{debug, info, trace};
 
 use crate::{agent_manager, config, message_handler, session_manager, slack_client};
 
@@ -37,7 +37,12 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     let slack_clone = slack.clone();
     let session_manager_clone = session_manager.clone();
     tokio::spawn(async move {
-        while let Some((_agent_name, notification)) = notification_rx.recv().await {
+        debug!("Agent notification handler started");
+        while let Some((agent_name, notification)) = notification_rx.recv().await {
+            trace!(
+                "Received notification from agent {}: session={}",
+                agent_name, notification.session_id
+            );
             // Find the Slack thread for this session
             let thread_key = session_manager_clone
                 .list_sessions()
@@ -47,6 +52,10 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                 .map(|(key, _)| key);
 
             if let Some(thread_key) = thread_key {
+                debug!(
+                    "Found thread_key {} for session {}",
+                    thread_key, notification.session_id
+                );
                 match notification.update {
                     agent_client_protocol::SessionUpdate::AgentMessageChunk(chunk) => {
                         if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
@@ -88,13 +97,16 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     let slack_clone = slack.clone();
     let app_token = config.slack.app_token.clone();
     tokio::spawn(async move {
+        info!("Connecting to Slack...");
         if let Err(e) = slack_clone.connect(app_token, event_tx).await {
             tracing::error!("Slack connection error: {}", e);
         }
     });
 
     // Main event loop: process Slack events
+    info!("Entering main event loop");
     while let Some(event) = event_rx.recv().await {
+        debug!("Processing event from main loop");
         message_handler::handle_event(
             event,
             slack.clone(),

@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use slack_morphism::prelude::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 /// Simplified Slack event types used internally by the application.
 /// Converts from slack_morphism's complex event types to our domain model.
@@ -91,6 +91,13 @@ impl SlackConnection {
         thread_ts: Option<&str>,
         text: &str,
     ) -> Result<String> {
+        debug!(
+            "Sending message to channel={}, thread_ts={:?}, text_len={}",
+            channel,
+            thread_ts,
+            text.len()
+        );
+        trace!("Message text: {}", text);
         let session = self.client.open_session(&self.bot_token);
 
         let mut req = SlackApiChatPostMessageRequest::new(
@@ -114,6 +121,12 @@ impl SlackConnection {
     /// Updates an existing message with new text.
     /// Requires the channel and timestamp (ts) of the message to update.
     pub async fn update_message(&self, channel: &str, ts: &str, text: &str) -> Result<()> {
+        debug!(
+            "Updating message: channel={}, ts={}, text_len={}",
+            channel,
+            ts,
+            text.len()
+        );
         let session = self.client.open_session(&self.bot_token);
 
         let req = SlackApiChatUpdateRequest::new(
@@ -138,6 +151,7 @@ async fn handle_push_event(
     _client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
     state: SlackClientEventsUserState,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    trace!("Received push event: {:?}", event.event);
     // Extract the event sender channel from user state
     let tx = state
         .read()
@@ -150,12 +164,17 @@ async fn handle_push_event(
         SlackEventCallbackBody::Message(msg) => {
             // Ignore messages from bots to prevent loops
             if msg.sender.bot_id.is_some() {
+                trace!("Ignoring bot message");
                 return Ok(());
             }
 
             if let Some(content) = msg.content {
                 if let Some(text) = content.text {
                     let user = msg.sender.user.map(|u| u.to_string()).unwrap_or_default();
+                    debug!(
+                        "Received message from user={}, channel={:?}",
+                        user, msg.origin.channel
+                    );
                     let _ = tx.send(SlackEvent::Message {
                         channel: msg
                             .origin
@@ -173,6 +192,10 @@ async fn handle_push_event(
         SlackEventCallbackBody::AppMention(mention) => {
             let user = mention.user.to_string();
             let text = mention.content.text.unwrap_or_default();
+            debug!(
+                "Received app mention from user={}, channel={}",
+                user, mention.channel
+            );
 
             let _ = tx.send(SlackEvent::AppMention {
                 channel: mention.channel.to_string(),

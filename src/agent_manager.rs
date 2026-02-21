@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::process::Command;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-use tracing::{error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::config::AgentConfig;
 
@@ -75,6 +75,8 @@ impl AgentManager {
     /// - Notification forwarding to main loop
     async fn spawn_agent(&self, config: AgentConfig) -> Result<()> {
         info!("Spawning agent: {}", config.name);
+        debug!("Agent command: {} {:?}", config.command, config.args);
+        trace!("Agent env: {:?}", config.env);
 
         let mut cmd = Command::new(&config.command);
         cmd.args(&config.args)
@@ -146,11 +148,18 @@ impl AgentManager {
                 while let Some(cmd) = cmd_rx.recv().await {
                     match cmd {
                         AgentCommand::NewSession { req, resp_tx } => {
+                            debug!("Agent {} processing NewSession request", agent_name);
                             let result = connection.new_session(req).await;
+                            trace!("NewSession result: {:?}", result);
                             let _ = resp_tx.send(result);
                         }
                         AgentCommand::Prompt { req, resp_tx } => {
+                            debug!(
+                                "Agent {} processing Prompt request for session {}",
+                                agent_name, req.session_id
+                            );
                             let result = connection.prompt(req).await;
+                            trace!("Prompt result: {:?}", result);
                             let _ = resp_tx.send(result);
                         }
                     }
@@ -174,6 +183,7 @@ impl AgentManager {
         agent_name: &str,
         req: NewSessionRequest,
     ) -> Result<NewSessionResponse> {
+        debug!("Creating new session with agent: {}", agent_name);
         let handle = self
             .agents
             .read()
@@ -196,6 +206,10 @@ impl AgentManager {
 
     /// Sends a prompt to an agent's existing session.
     pub async fn prompt(&self, agent_name: &str, req: PromptRequest) -> Result<PromptResponse> {
+        debug!(
+            "Sending prompt to agent: {}, session: {}",
+            agent_name, req.session_id
+        );
         let handle = self
             .agents
             .read()
@@ -236,6 +250,10 @@ impl Client for NotificationClient {
         &self,
         args: RequestPermissionRequest,
     ) -> agent_client_protocol::Result<RequestPermissionResponse> {
+        debug!(
+            "Agent {} requesting permission: {:?}",
+            self.agent_name, args.options
+        );
         let first_option = args
             .options
             .first()
@@ -254,7 +272,16 @@ impl Client for NotificationClient {
         &self,
         args: SessionNotification,
     ) -> agent_client_protocol::Result<()> {
-        let _ = self.notification_tx.send((self.agent_name.clone(), args));
+        trace!(
+            "Agent {} notification: session={}, update={:?}",
+            self.agent_name, args.session_id, args.update
+        );
+        if let Err(e) = self.notification_tx.send((self.agent_name.clone(), args)) {
+            error!(
+                "Failed to send notification from agent {}: {}",
+                self.agent_name, e
+            );
+        }
         Ok(())
     }
 }

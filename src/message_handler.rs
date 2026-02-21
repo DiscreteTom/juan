@@ -7,6 +7,7 @@
 use crate::{agent_manager, config, session_manager, slack_client};
 use std::sync::Arc;
 use tokio::process::Command;
+use tracing::{debug, trace};
 
 /// Main entry point for handling Slack events.
 /// Routes events to appropriate handlers based on message content.
@@ -96,6 +97,7 @@ async fn handle_command(
 
     match command {
         "#agent" => {
+            debug!("Processing #agent command: parts={:?}", parts);
             // Can only create sessions in main channel, not in existing threads
             if thread_ts.is_some() {
                 let _ = slack
@@ -130,6 +132,7 @@ async fn handle_command(
                 .find(|a| a == &agent_name)
                 .is_none()
             {
+                debug!("Agent {} not running, spawning...", agent_name);
                 let agent_config = config.agents.iter().find(|a| a.name == agent_name);
                 if let Some(cfg) = agent_config {
                     if let Err(e) = agent_manager.spawn_agents(vec![cfg.clone()]).await {
@@ -155,6 +158,10 @@ async fn handle_command(
             }
 
             // Create session (uses ts as thread key, creating a new thread)
+            debug!(
+                "Creating session for thread_key={}, agent={}",
+                ts, agent_name
+            );
             match session_manager
                 .create_session(ts.to_string(), agent_name.to_string(), workspace)
                 .await
@@ -192,6 +199,7 @@ async fn handle_command(
             true
         }
         "#session" => {
+            debug!("Processing #session command in thread_ts={:?}", thread_ts);
             // Show current session info (only works in threads)
             if thread_ts.is_none() {
                 let _ = slack
@@ -215,6 +223,7 @@ async fn handle_command(
             true
         }
         "#end" => {
+            debug!("Processing #end command in thread_ts={:?}", thread_ts);
             // End current session (only works in threads)
             if thread_ts.is_none() {
                 let _ = slack
@@ -260,6 +269,12 @@ async fn handle_message(
     session_manager: Arc<session_manager::SessionManager>,
 ) {
     let thread_key = thread_ts.unwrap_or(channel);
+    debug!(
+        "Handling message in thread_key={}, text_len={}",
+        thread_key,
+        text.len()
+    );
+    trace!("Message text: {}", text);
 
     // Verify session exists for this thread
     let session = match session_manager.get_session(thread_key).await {
@@ -278,7 +293,9 @@ async fn handle_message(
 
     // If session ID is still placeholder, create actual ACP session
     if session.session_id.to_string().starts_with("session-") {
+        debug!("Creating ACP session for thread_key={}", thread_key);
         let workspace_path = session_manager.expand_workspace_path(&session.workspace);
+        trace!("Expanded workspace path: {}", workspace_path);
         let new_session_req = agent_client_protocol::NewSessionRequest::new(workspace_path);
 
         match agent_manager
@@ -310,6 +327,10 @@ async fn handle_message(
 
     // Get updated session with real session ID
     let session = session_manager.get_session(thread_key).await.unwrap();
+    debug!(
+        "Sending prompt to agent={}, session_id={}",
+        session.agent_name, session.session_id
+    );
     let prompt_req = agent_client_protocol::PromptRequest::new(
         session.session_id.clone(),
         vec![agent_client_protocol::ContentBlock::Text(
@@ -341,6 +362,7 @@ async fn handle_shell_command(
     slack: Arc<slack_client::SlackConnection>,
 ) {
     let cmd = text.trim().strip_prefix('!').unwrap_or("").trim();
+    debug!("Executing shell command: {}", cmd);
 
     if cmd.is_empty() {
         let _ = slack

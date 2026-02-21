@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use toml_scaffold::TomlScaffold;
+use tracing::{debug, trace};
 
 /// Config for [anywhere](https://github.com/DiscreteTom/anywhere)
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, TomlScaffold)]
@@ -56,10 +57,15 @@ pub struct AgentConfig {
 
 impl Config {
     pub fn load(path: &str) -> Result<Self> {
+        debug!("Loading config from: {}", path);
         let content = std::fs::read_to_string(path)
             .context(format!("Failed to read config file: {}", path))?;
         let config: Config = toml::from_str(&content).context("Failed to parse config file")?;
         config.validate()?;
+        trace!(
+            "Config loaded successfully: {} agents configured",
+            config.agents.len()
+        );
         Ok(config)
     }
 
@@ -67,6 +73,10 @@ impl Config {
         use std::collections::HashMap;
         use toml_scaffold::TomlScaffold;
 
+        debug!(
+            "Initializing config file: {}, override={}",
+            output, override_existing
+        );
         if !override_existing && std::path::Path::new(output).exists() {
             anyhow::bail!(
                 "File already exists: {}. Use --override to overwrite.",
@@ -100,6 +110,7 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
+        debug!("Validating config");
         anyhow::ensure!(
             !self.agents.is_empty(),
             "At least one agent must be configured"
@@ -110,6 +121,7 @@ impl Config {
             anyhow::ensure!(!agent.command.is_empty(), "Agent command cannot be empty");
         }
 
+        trace!("Config validation passed");
         Ok(())
     }
 

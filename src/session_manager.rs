@@ -11,6 +11,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{debug, trace};
 
 use crate::config::Config;
 
@@ -57,6 +58,10 @@ impl SessionManager {
         agent_name: String,
         workspace: Option<String>,
     ) -> Result<SessionState> {
+        debug!(
+            "Creating session: thread_key={}, agent={}, workspace={:?}",
+            thread_key, agent_name, workspace
+        );
         let workspace = workspace.unwrap_or_else(|| self.config.bridge.default_workspace.clone());
 
         // Look up agent configuration to get auto-approve setting
@@ -82,8 +87,9 @@ impl SessionManager {
         self.sessions
             .write()
             .await
-            .insert(thread_key, session.clone());
+            .insert(thread_key.clone(), session.clone());
 
+        trace!("Session created successfully: {:?}", session.session_id);
         Ok(session)
     }
 
@@ -95,6 +101,10 @@ impl SessionManager {
     /// Updates the ACP session ID for a thread.
     /// Called after the first message creates the actual ACP session.
     pub async fn update_session_id(&self, thread_key: &str, session_id: SessionId) -> Result<()> {
+        debug!(
+            "Updating session ID for thread_key={}, new_session_id={}",
+            thread_key, session_id
+        );
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(thread_key) {
             session.session_id = session_id;
@@ -106,6 +116,7 @@ impl SessionManager {
 
     /// Ends a session and removes it from tracking.
     pub async fn end_session(&self, thread_key: &str) -> Result<()> {
+        debug!("Ending session for thread_key={}", thread_key);
         self.sessions
             .write()
             .await
