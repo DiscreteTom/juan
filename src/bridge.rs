@@ -206,7 +206,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                         &diff_text,
                                         &filename,
                                         "diff",
-                                        Some("Output"),
+                                        Some("Diff"),
                                     )
                                     .await
                                 {
