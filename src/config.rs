@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use toml_scaffold::TomlScaffold;
 use tracing::{debug, trace};
 

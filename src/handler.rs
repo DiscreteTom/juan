@@ -51,7 +51,7 @@ pub async fn handle_event(
 
             // Bot commands (#) - control sessions and agents
             if text.trim().starts_with('#') {
-                if handle_command(
+                handle_command(
                     &text,
                     &channel,
                     &ts,
@@ -61,10 +61,8 @@ pub async fn handle_event(
                     agent_manager.clone(),
                     session_manager.clone(),
                 )
-                .await
-                {
-                    return;
-                }
+                .await;
+                return;
             }
 
             // Regular messages - forward to agent
@@ -85,12 +83,13 @@ pub async fn handle_event(
 /// Handles bot commands (messages starting with #).
 ///
 /// Supported commands:
+/// - #help - Show available commands
 /// - #agent <name> [workspace] - Start a new session
 /// - #agents - List available agents
 /// - #session - Show current session info
 /// - #end - End current session
-///
-/// Returns true if the message was handled as a command, false otherwise.
+/// - #read <file_path> - Read local file content
+/// - #diff [file_path] - Show git diff
 async fn handle_command(
     text: &str,
     channel: &str,
@@ -100,7 +99,7 @@ async fn handle_command(
     config: Arc<config::Config>,
     agent_manager: Arc<agent::AgentManager>,
     session_manager: Arc<session::SessionManager>,
-) -> bool {
+) {
     let parts: Vec<&str> = text.trim().split_whitespace().collect();
     let command = parts[0];
 
@@ -116,7 +115,7 @@ async fn handle_command(
                         "Cannot create agent in a thread. Use #agent in the main channel.",
                     )
                     .await;
-                return true;
+                return;
             }
 
             if parts.len() < 2 {
@@ -127,7 +126,7 @@ async fn handle_command(
                         "Usage: #agent <agent_name> [workspace_path]",
                     )
                     .await;
-                return true;
+                return;
             }
 
             let agent_name = parts[1];
@@ -152,7 +151,7 @@ async fn handle_command(
                                 &format!("Failed to spawn agent: {}", e),
                             )
                             .await;
-                        return true;
+                        return;
                     }
                 } else {
                     let _ = slack
@@ -162,7 +161,7 @@ async fn handle_command(
                             &format!("Agent not found: {}", agent_name),
                         )
                         .await;
-                    return true;
+                    return;
                 }
             }
 
@@ -199,7 +198,6 @@ async fn handle_command(
                         .await;
                 }
             }
-            true
         }
         "#agents" => {
             // List all configured agents with descriptions
@@ -210,7 +208,6 @@ async fn handle_command(
                 .collect();
             let msg = format!("Available agents:\n{}", agent_list.join("\n"));
             let _ = slack.send_message(channel, thread_ts, &msg).await;
-            true
         }
         "#session" => {
             debug!("Processing #session command in thread_ts={:?}", thread_ts);
@@ -219,7 +216,7 @@ async fn handle_command(
                 let _ = slack
                     .send_message(channel, None, "This command can only be used in a thread.")
                     .await;
-                return true;
+                return;
             }
 
             let thread_key = thread_ts.unwrap();
@@ -234,7 +231,6 @@ async fn handle_command(
                     .send_message(channel, thread_ts, "No active session in this thread.")
                     .await;
             }
-            true
         }
         "#end" => {
             debug!("Processing #end command in thread_ts={:?}", thread_ts);
@@ -243,7 +239,7 @@ async fn handle_command(
                 let _ = slack
                     .send_message(channel, None, "This command can only be used in a thread.")
                     .await;
-                return true;
+                return;
             }
 
             let thread_key = thread_ts.unwrap();
@@ -259,11 +255,149 @@ async fn handle_command(
                         .await;
                 }
             }
-            true
         }
-        // Unknown command starting with # - not handled
-        _ if command.starts_with('#') => false,
-        _ => false,
+        "#read" => {
+            debug!("Processing #read command in thread_ts={:?}", thread_ts);
+            // Read file (only works in threads)
+            if thread_ts.is_none() {
+                let _ = slack
+                    .send_message(channel, None, "This command can only be used in a thread.")
+                    .await;
+                return;
+            }
+
+            if parts.len() < 2 {
+                let _ = slack
+                    .send_message(channel, thread_ts, "Usage: #read <file_path>")
+                    .await;
+                return;
+            }
+
+            let thread_key = thread_ts.unwrap();
+            let session = session_manager.get_session(thread_key).await;
+            if session.is_none() {
+                let _ = slack
+                    .send_message(channel, thread_ts, "No active session in this thread.")
+                    .await;
+                return;
+            }
+
+            let file_path = parts[1];
+            let workspace = crate::utils::expand_path(&session.unwrap().workspace);
+            let full_path = std::path::Path::new(&workspace).join(file_path);
+
+            if full_path.is_dir() {
+                match std::fs::read_dir(&full_path) {
+                    Ok(entries) => {
+                        let mut files: Vec<String> = entries
+                            .filter_map(|e| e.ok())
+                            .map(|e| {
+                                let name = e.file_name().to_string_lossy().to_string();
+                                if e.path().is_dir() {
+                                    format!("{}/", name)
+                                } else {
+                                    name
+                                }
+                            })
+                            .collect();
+                        files.sort();
+                        let list = files.join("\n");
+                        let ticks = crate::utils::safe_backticks(&list);
+                        let msg = format!("{}:\n{}\n{}\n{}", file_path, ticks, list, ticks);
+                        let _ = slack.send_message(channel, thread_ts, &msg).await;
+                    }
+                    Err(e) => {
+                        let _ = slack
+                            .send_message(
+                                channel,
+                                thread_ts,
+                                &format!("Error reading directory: {}", e),
+                            )
+                            .await;
+                    }
+                }
+            } else {
+                match std::fs::read_to_string(&full_path) {
+                    Ok(content) => {
+                        let ticks = crate::utils::safe_backticks(&content);
+                        let msg = format!("{}:\n{}\n{}\n{}", file_path, ticks, content, ticks);
+                        let _ = slack.send_message(channel, thread_ts, &msg).await;
+                    }
+                    Err(e) => {
+                        let _ = slack
+                            .send_message(channel, thread_ts, &format!("Error reading file: {}", e))
+                            .await;
+                    }
+                }
+            }
+        }
+        "#diff" => {
+            debug!("Processing #diff command in thread_ts={:?}", thread_ts);
+            // Show git diff (only works in threads)
+            if thread_ts.is_none() {
+                let _ = slack
+                    .send_message(channel, None, "This command can only be used in a thread.")
+                    .await;
+                return;
+            }
+
+            let thread_key = thread_ts.unwrap();
+            let session = session_manager.get_session(thread_key).await;
+            if session.is_none() {
+                let _ = slack
+                    .send_message(channel, thread_ts, "No active session in this thread.")
+                    .await;
+                return;
+            }
+
+            let workspace = crate::utils::expand_path(&session.unwrap().workspace);
+            let mut cmd = std::process::Command::new("git");
+            cmd.arg("diff").current_dir(&workspace);
+
+            if parts.len() >= 2 {
+                cmd.arg(parts[1]);
+            }
+
+            match cmd.output() {
+                Ok(output) => {
+                    let diff = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if diff.is_empty() {
+                        let _ = slack
+                            .send_message(channel, thread_ts, "No changes to show.")
+                            .await;
+                    } else {
+                        let ticks = crate::utils::safe_backticks(&diff);
+                        let msg = format!("{}\n{}\n{}", ticks, diff, ticks);
+                        let _ = slack.send_message(channel, thread_ts, &msg).await;
+                    }
+                }
+                Err(e) => {
+                    let _ = slack
+                        .send_message(
+                            channel,
+                            thread_ts,
+                            &format!("Error running git diff: {}", e),
+                        )
+                        .await;
+                }
+            }
+        }
+        "#help" | _ => {
+            let _ = slack
+                .send_message(
+                    channel,
+                    thread_ts,
+                    "Available commands:\n\
+                    • #help - Show this help message\n\
+                    • #agent <name> [workspace] - Start a new agent session in a thread\n\
+                    • #agents - List available agents\n\
+                    • #session - Show current agent session info\n\
+                    • #end - End current agent session\n\
+                    • #read <file_path> - Read local file content\n\
+                    • #diff [file_path] - Show git diff",
+                )
+                .await;
+        }
     }
 }
 
