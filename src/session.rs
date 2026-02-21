@@ -55,16 +55,18 @@ impl SessionManager {
     /// * `agent_name` - Name of the agent to use
     /// * `workspace` - Optional workspace path (uses default if not provided)
     /// * `channel` - Slack channel ID
+    /// * `session_id` - ACP session ID
     pub async fn create_session(
         &self,
         thread_key: String,
         agent_name: String,
         workspace: Option<String>,
         channel: String,
+        session_id: SessionId,
     ) -> Result<SessionState> {
         debug!(
-            "Creating session: thread_key={}, agent={}, workspace={:?}",
-            thread_key, agent_name, workspace
+            "Creating session: thread_key={}, agent={}, workspace={:?}, session_id={}",
+            thread_key, agent_name, workspace, session_id
         );
         let workspace = workspace.unwrap_or_else(|| self.config.bridge.default_workspace.clone());
 
@@ -77,9 +79,6 @@ impl SessionManager {
             .ok_or_else(|| anyhow::anyhow!("Agent not found: {}", agent_name))?;
 
         let auto_approve = agent_config.auto_approve;
-
-        // Create placeholder session ID (will be updated after first ACP session creation)
-        let session_id = SessionId::from(format!("session-{}", thread_key));
 
         let session = SessionState {
             session_id,
@@ -101,22 +100,6 @@ impl SessionManager {
     /// Retrieves the session for a given Slack thread.
     pub async fn get_session(&self, thread_key: &str) -> Option<SessionState> {
         self.sessions.read().await.get(thread_key).cloned()
-    }
-
-    /// Updates the ACP session ID for a thread.
-    /// Called after the first message creates the actual ACP session.
-    pub async fn update_session_id(&self, thread_key: &str, session_id: SessionId) -> Result<()> {
-        debug!(
-            "Updating session ID for thread_key={}, new_session_id={}",
-            thread_key, session_id
-        );
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(thread_key) {
-            session.session_id = session_id;
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Session not found: {}", thread_key))
-        }
     }
 
     /// Ends a session and removes it from tracking.

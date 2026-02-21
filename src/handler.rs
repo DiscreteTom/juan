@@ -175,10 +175,32 @@ async fn handle_command(
                 }
             }
 
-            // Create session (uses ts as thread key, creating a new thread)
+            // Create ACP session
+            debug!("Creating ACP session for agent={}", agent_name);
+            let workspace_path = workspace
+                .clone()
+                .unwrap_or_else(|| config.bridge.default_workspace.clone());
+            let workspace_path = crate::utils::expand_path(&workspace_path);
+            let new_session_req = agent_client_protocol::NewSessionRequest::new(workspace_path);
+
+            let session_id = match agent_manager.new_session(agent_name, new_session_req).await {
+                Ok(resp) => resp.session_id,
+                Err(e) => {
+                    let _ = slack
+                        .send_message(
+                            channel,
+                            Some(ts),
+                            &format!("Failed to create ACP session: {}", e),
+                        )
+                        .await;
+                    return;
+                }
+            };
+
+            // Create session
             debug!(
-                "Creating session for thread_key={}, agent={}",
-                ts, agent_name
+                "Creating session for thread_key={}, agent={}, session_id={}",
+                ts, agent_name, session_id
             );
             match session_manager
                 .create_session(
@@ -186,6 +208,7 @@ async fn handle_command(
                     agent_name.to_string(),
                     workspace,
                     channel.to_string(),
+                    session_id,
                 )
                 .await
             {
@@ -418,9 +441,8 @@ async fn handle_command(
 ///
 /// Flow:
 /// 1. Check if thread has an active session
-/// 2. Create ACP session if this is the first message
-/// 3. Send prompt to agent via ACP
-/// 4. Update Slack with response
+/// 2. Send prompt to agent via ACP
+/// 3. Update Slack with response
 async fn handle_message(
     text: &str,
     channel: &str,
@@ -449,42 +471,6 @@ async fn handle_message(
         }
     };
 
-    // If session ID is still placeholder, create actual ACP session
-    if session.session_id.to_string().starts_with("session-") {
-        debug!("Creating ACP session for thread_key={}", thread_key);
-        let workspace_path = crate::utils::expand_path(&session.workspace);
-        trace!("Expanded workspace path: {}", workspace_path);
-        let new_session_req = agent_client_protocol::NewSessionRequest::new(workspace_path);
-
-        match agent_manager
-            .new_session(&session.agent_name, new_session_req)
-            .await
-        {
-            Ok(resp) => {
-                // Update session with real ACP session ID
-                if let Err(e) = session_manager
-                    .update_session_id(thread_key, resp.session_id)
-                    .await
-                {
-                    tracing::error!("Failed to update session ID: {}", e);
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to create ACP session: {}", e);
-                let _ = slack
-                    .send_message(
-                        channel,
-                        thread_ts,
-                        &format!("Error: Failed to create session: {}", e),
-                    )
-                    .await;
-                return;
-            }
-        }
-    }
-
-    // Get updated session with real session ID
-    let session = session_manager.get_session(thread_key).await.unwrap();
     debug!(
         "Sending prompt to agent={}, session_id={}",
         session.agent_name, session.session_id
