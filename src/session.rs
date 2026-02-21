@@ -140,11 +140,6 @@ impl SessionManager {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     }
-
-    /// Expands a workspace path (e.g., ~ to home directory).
-    pub fn expand_workspace_path(&self, path: &str) -> String {
-        self.config.expand_path(path).to_string_lossy().to_string()
-    }
 }
 
 impl Clone for SessionState {

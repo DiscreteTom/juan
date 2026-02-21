@@ -309,7 +309,7 @@ async fn handle_message(
     // If session ID is still placeholder, create actual ACP session
     if session.session_id.to_string().starts_with("session-") {
         debug!("Creating ACP session for thread_key={}", thread_key);
-        let workspace_path = session_manager.expand_workspace_path(&session.workspace);
+        let workspace_path = crate::utils::expand_path(&session.workspace);
         trace!("Expanded workspace path: {}", workspace_path);
         let new_session_req = agent_client_protocol::NewSessionRequest::new(workspace_path);
 
@@ -397,7 +397,7 @@ async fn handle_shell_command(
     // Get workspace from session if in a thread
     let workspace = if let Some(thread) = thread_ts {
         if let Some(session) = session_manager.get_session(thread).await {
-            Some(session_manager.expand_workspace_path(&session.workspace))
+            Some(crate::utils::expand_path(&session.workspace))
         } else {
             None
         }

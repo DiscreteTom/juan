@@ -134,13 +134,4 @@ impl Config {
         trace!("Config validation passed");
         Ok(())
     }
-
-    pub fn expand_path(&self, path: &str) -> PathBuf {
-        if path.starts_with('~') {
-            if let Some(home) = dirs::home_dir() {
-                return home.join(path.strip_prefix("~/").unwrap_or(&path[1..]));
-            }
-        }
-        PathBuf::from(path)
-    }
 }

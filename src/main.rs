@@ -13,6 +13,7 @@ mod config;
 mod handler;
 mod session;
 mod slack;
+mod utils;
 
 use anyhow::Result;
 use clap::Parser;
