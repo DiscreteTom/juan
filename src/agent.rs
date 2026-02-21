@@ -23,6 +23,18 @@ pub struct AgentManager {
     agents: Arc<RwLock<HashMap<String, AgentHandle>>>,
     /// Channel for receiving notifications from agents
     notification_tx: mpsc::UnboundedSender<(String, SessionNotification)>,
+    /// Map of session_id to auto_approve setting
+    session_permissions: Arc<RwLock<HashMap<String, bool>>>,
+    /// Channel for receiving permission requests from agents
+    permission_request_tx: mpsc::UnboundedSender<PermissionRequest>,
+}
+
+/// Permission request from an agent that needs user approval
+pub struct PermissionRequest {
+    pub agent_name: String,
+    pub session_id: SessionId,
+    pub options: Vec<PermissionOption>,
+    pub response_tx: oneshot::Sender<Option<String>>,
 }
 
 /// Handle for communicating with a spawned agent.
@@ -47,10 +59,15 @@ enum AgentCommand {
 
 impl AgentManager {
     /// Creates a new agent manager with the given notification channel.
-    pub fn new(notification_tx: mpsc::UnboundedSender<(String, SessionNotification)>) -> Self {
+    pub fn new(
+        notification_tx: mpsc::UnboundedSender<(String, SessionNotification)>,
+        permission_request_tx: mpsc::UnboundedSender<PermissionRequest>,
+    ) -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             notification_tx,
+            session_permissions: Arc::new(RwLock::new(HashMap::new())),
+            permission_request_tx,
         }
     }
 
@@ -104,6 +121,8 @@ impl AgentManager {
         let agent_name = config.name.clone();
         let agent_name2 = agent_name.clone();
         let notification_tx = self.notification_tx.clone();
+        let session_permissions = self.session_permissions.clone();
+        let permission_request_tx = self.permission_request_tx.clone();
 
         // Spawn dedicated thread for this agent's ACP communication
         // Uses LocalSet to allow !Send futures from ACP library
@@ -118,6 +137,8 @@ impl AgentManager {
                 let client = NotificationClient {
                     agent_name: agent_name.clone(),
                     notification_tx,
+                    session_permissions,
+                    permission_request_tx,
                 };
                 let (connection, io_task) =
                     ClientSideConnection::new(client, stdin, stdout, |fut| {
@@ -178,6 +199,7 @@ impl AgentManager {
         &self,
         agent_name: &str,
         req: NewSessionRequest,
+        auto_approve: bool,
     ) -> Result<NewSessionResponse> {
         debug!("Creating new session with agent: {}", agent_name);
         let handle = self
@@ -194,10 +216,18 @@ impl AgentManager {
             .send(AgentCommand::NewSession { req, resp_tx })
             .context("Failed to send command to agent")?;
 
-        resp_rx
+        let response = resp_rx
             .await
             .context("Agent command channel closed")?
-            .map_err(|e| anyhow::anyhow!("Agent error: {}", e))
+            .map_err(|e| anyhow::anyhow!("Agent error: {}", e))?;
+
+        // Store auto_approve setting for this session
+        self.session_permissions
+            .write()
+            .await
+            .insert(response.session_id.to_string(), auto_approve);
+
+        Ok(response)
     }
 
     /// Sends a prompt to an agent's existing session.
@@ -236,30 +266,88 @@ impl AgentManager {
 struct NotificationClient {
     agent_name: String,
     notification_tx: mpsc::UnboundedSender<(String, SessionNotification)>,
+    session_permissions: Arc<RwLock<HashMap<String, bool>>>,
+    permission_request_tx: mpsc::UnboundedSender<PermissionRequest>,
 }
 
 #[async_trait::async_trait(?Send)]
 impl Client for NotificationClient {
     /// Handles permission requests from agents.
-    /// Currently auto-approves by selecting the first option.
+    /// Checks the session's auto_approve setting and either approves automatically
+    /// or requests user approval via Slack.
     async fn request_permission(
         &self,
         args: RequestPermissionRequest,
     ) -> agent_client_protocol::Result<RequestPermissionResponse> {
         debug!(
-            "Agent {} requesting permission: {:?}",
-            self.agent_name, args.options
+            "Agent {} requesting permission for session {}: {:?}",
+            self.agent_name, args.session_id, args.options
         );
-        let first_option = args
-            .options
-            .first()
-            .ok_or_else(|| Error::invalid_params())?;
 
-        Ok(RequestPermissionResponse::new(
-            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
-                first_option.option_id.clone(),
-            )),
-        ))
+        let auto_approve = self
+            .session_permissions
+            .read()
+            .await
+            .get(&args.session_id.to_string())
+            .copied()
+            .unwrap_or(false);
+
+        if auto_approve {
+            let first_option = args
+                .options
+                .first()
+                .ok_or_else(|| Error::invalid_params())?;
+
+            debug!(
+                "Auto-approving permission for session {}: {}",
+                args.session_id, first_option.option_id
+            );
+
+            Ok(RequestPermissionResponse::new(
+                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                    first_option.option_id.clone(),
+                )),
+            ))
+        } else {
+            // Request user approval via Slack
+            info!(
+                "Requesting user approval for session {} (auto_approve=false)",
+                args.session_id
+            );
+
+            let (response_tx, response_rx) = oneshot::channel();
+            let permission_req = PermissionRequest {
+                agent_name: self.agent_name.clone(),
+                session_id: args.session_id.clone(),
+                options: args.options.clone(),
+                response_tx,
+            };
+
+            if let Err(e) = self.permission_request_tx.send(permission_req) {
+                error!("Failed to send permission request: {}", e);
+                return Ok(RequestPermissionResponse::new(
+                    RequestPermissionOutcome::Cancelled,
+                ));
+            }
+
+            // Wait for user response
+            match response_rx.await {
+                Ok(Some(option_id)) => {
+                    debug!("User approved permission: {}", option_id);
+                    Ok(RequestPermissionResponse::new(
+                        RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                            option_id,
+                        )),
+                    ))
+                }
+                Ok(None) | Err(_) => {
+                    debug!("User denied or cancelled permission request");
+                    Ok(RequestPermissionResponse::new(
+                        RequestPermissionOutcome::Cancelled,
+                    ))
+                }
+            }
+        }
     }
 
     /// Handles session notifications from agents (e.g., message chunks).

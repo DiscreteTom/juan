@@ -2,7 +2,7 @@ use agent_client_protocol::SessionId;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{debug, info, trace};
 
 use crate::{agent, config, handler, session, slack};
@@ -13,6 +13,19 @@ pub type MessageBuffers = Arc<RwLock<HashMap<SessionId, String>>>;
 /// Shared map for tracking tool call message timestamps
 pub type ToolCallMessages =
     Arc<RwLock<HashMap<String, (String, String, agent_client_protocol::ToolCall)>>>; // tool_call_id -> (channel, ts, tool_call)
+
+/// Shared map for tracking pending permission requests
+pub type PendingPermissions = Arc<
+    RwLock<
+        HashMap<
+            String, // thread_key
+            (
+                Vec<agent_client_protocol::PermissionOption>,
+                oneshot::Sender<Option<String>>,
+            ),
+        >,
+    >,
+>;
 
 pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     info!("Slack bot configured");
@@ -29,7 +42,11 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
     // Create channel for agent notifications (agent -> main loop)
     let (notification_tx, mut notification_rx) = mpsc::unbounded_channel();
-    let agent_manager = Arc::new(agent::AgentManager::new(notification_tx));
+    let (permission_request_tx, mut permission_request_rx) = mpsc::unbounded_channel();
+    let agent_manager = Arc::new(agent::AgentManager::new(
+        notification_tx,
+        permission_request_tx,
+    ));
     info!("Agent manager initialized (agents will spawn on-demand)");
 
     // Create session manager to track Slack thread -> agent session mappings
@@ -45,6 +62,9 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
     // Create shared map for tracking tool call messages
     let tool_call_messages: ToolCallMessages = Arc::new(RwLock::new(HashMap::new()));
+
+    // Create shared map for tracking pending permission requests
+    let pending_permissions: PendingPermissions = Arc::new(RwLock::new(HashMap::new()));
 
     // Spawn task to handle agent notifications and forward to Slack
     let slack_clone = slack.clone();
@@ -262,6 +282,70 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
         }
     });
 
+    // Spawn task to handle permission requests from agents
+    let slack_clone = slack.clone();
+    let session_manager_clone = session_manager.clone();
+    let pending_permissions_clone = pending_permissions.clone();
+    tokio::spawn(async move {
+        debug!("Permission request handler started");
+
+        while let Some(permission_req) = permission_request_rx.recv().await {
+            debug!(
+                "Received permission request from agent {} for session {}",
+                permission_req.agent_name, permission_req.session_id
+            );
+
+            // Find the Slack thread for this session
+            let session_info = session_manager_clone
+                .list_sessions()
+                .await
+                .into_iter()
+                .find(|(_, session)| session.session_id == permission_req.session_id);
+
+            if let Some((thread_key, session)) = session_info {
+                // Format permission options
+                let options_text = permission_req
+                    .options
+                    .iter()
+                    .enumerate()
+                    .map(|(i, opt)| format!("{}. {}", i + 1, opt.name))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                let msg = format!(
+                    "⚠️ Permission Required\n\n{}\n\nReply with the number to approve, or 'deny' to reject.",
+                    options_text
+                );
+
+                if let Err(e) = slack_clone
+                    .send_message(&session.channel, Some(&thread_key), &msg)
+                    .await
+                {
+                    tracing::error!("Failed to send permission request message: {}", e);
+                    let _ = permission_req.response_tx.send(None);
+                    continue;
+                }
+
+                // Store the pending permission request
+                debug!(
+                    "Storing pending permission for thread_key={}, options_count={}",
+                    thread_key,
+                    permission_req.options.len()
+                );
+                pending_permissions_clone.write().await.insert(
+                    thread_key.clone(),
+                    (permission_req.options, permission_req.response_tx),
+                );
+            } else {
+                tracing::error!(
+                    "Session not found for permission request: {}",
+                    permission_req.session_id
+                );
+                let _ = permission_req.response_tx.send(None);
+            }
+        }
+    });
+
     // Spawn task to connect to Slack and forward events to main loop
     let slack_clone = slack.clone();
     let app_token = config.slack.app_token.clone();
@@ -283,6 +367,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
             agent_manager.clone(),
             session_manager.clone(),
             message_buffers.clone(),
+            pending_permissions.clone(),
         )
         .await;
     }

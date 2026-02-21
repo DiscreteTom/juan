@@ -19,6 +19,51 @@ const HELP_MESSAGE: &str = "Available commands:
 • #diff [file_path] - Show git diff
 • !<command> - Execute shell command";
 
+async fn handle_permission_response(
+    text: &str,
+    options: Vec<agent_client_protocol::PermissionOption>,
+    response_tx: tokio::sync::oneshot::Sender<Option<String>>,
+    slack: &slack::SlackConnection,
+    channel: &str,
+    thread_key: &str,
+) {
+    debug!("Handling permission response: text={}", text);
+    let text = text.trim();
+
+    if text.eq_ignore_ascii_case("deny") {
+        let _ = slack
+            .send_message(channel, Some(thread_key), "❌ Permission denied")
+            .await;
+        let _ = response_tx.send(None);
+        return;
+    }
+
+    // Try to parse as a number
+    if let Ok(choice) = text.parse::<usize>() {
+        if choice > 0 && choice <= options.len() {
+            let selected = &options[choice - 1];
+            let _ = slack
+                .send_message(
+                    channel,
+                    Some(thread_key),
+                    &format!("✅ Approved: {}", selected.name),
+                )
+                .await;
+            let _ = response_tx.send(Some(selected.option_id.to_string()));
+            return;
+        }
+    }
+
+    let _ = slack
+        .send_message(
+            channel,
+            Some(thread_key),
+            "❌ Invalid response. Permission denied.",
+        )
+        .await;
+    let _ = response_tx.send(None);
+}
+
 /// Main entry point for handling Slack events.
 /// Routes events to appropriate handlers based on message content.
 pub async fn handle_event(
@@ -28,6 +73,7 @@ pub async fn handle_event(
     agent_manager: Arc<agent::AgentManager>,
     session_manager: Arc<session::SessionManager>,
     message_buffers: bridge::MessageBuffers,
+    pending_permissions: bridge::PendingPermissions,
 ) {
     tracing::info!("Received event: {:?}", event);
 
@@ -46,6 +92,29 @@ pub async fn handle_event(
             text,
             ..
         } => {
+            // Check if this is a response to a pending permission request FIRST
+            let thread_key = thread_ts.as_deref().unwrap_or(&ts);
+            debug!(
+                "Checking for pending permission: thread_key={}, pending_count={}",
+                thread_key,
+                pending_permissions.read().await.len()
+            );
+            if let Some((options, response_tx)) =
+                pending_permissions.write().await.remove(thread_key)
+            {
+                debug!("Found pending permission request, handling response");
+                handle_permission_response(
+                    &text,
+                    options,
+                    response_tx,
+                    &slack,
+                    &channel,
+                    thread_key,
+                )
+                .await;
+                return;
+            }
+
             // Shell commands (!) - execute local commands
             if text.trim().starts_with('!') {
                 handle_shell_command(
@@ -142,6 +211,22 @@ async fn handle_command(
             let agent_name = parts[1];
             let workspace = parts.get(2).map(|s| s.to_string());
 
+            // Look up agent config
+            let agent_config = config.agents.iter().find(|a| a.name == agent_name);
+            let agent_config = match agent_config {
+                Some(cfg) => cfg,
+                None => {
+                    let _ = slack
+                        .send_message(
+                            channel,
+                            Some(ts),
+                            &format!("Agent not found: {}", agent_name),
+                        )
+                        .await;
+                    return;
+                }
+            };
+
             // Spawn agent if not already running
             if agent_manager
                 .list_agents()
@@ -151,25 +236,9 @@ async fn handle_command(
                 .is_none()
             {
                 debug!("Agent {} not running, spawning...", agent_name);
-                let agent_config = config.agents.iter().find(|a| a.name == agent_name);
-                if let Some(cfg) = agent_config {
-                    if let Err(e) = agent_manager.spawn_agents(vec![cfg.clone()]).await {
-                        let _ = slack
-                            .send_message(
-                                channel,
-                                Some(ts),
-                                &format!("Failed to spawn agent: {}", e),
-                            )
-                            .await;
-                        return;
-                    }
-                } else {
+                if let Err(e) = agent_manager.spawn_agents(vec![agent_config.clone()]).await {
                     let _ = slack
-                        .send_message(
-                            channel,
-                            Some(ts),
-                            &format!("Agent not found: {}", agent_name),
-                        )
+                        .send_message(channel, Some(ts), &format!("Failed to spawn agent: {}", e))
                         .await;
                     return;
                 }
@@ -183,7 +252,10 @@ async fn handle_command(
             let workspace_path = crate::utils::expand_path(&workspace_path);
             let new_session_req = agent_client_protocol::NewSessionRequest::new(workspace_path);
 
-            let session_id = match agent_manager.new_session(agent_name, new_session_req).await {
+            let session_id = match agent_manager
+                .new_session(agent_name, new_session_req, agent_config.auto_approve)
+                .await
+            {
                 Ok(resp) => resp.session_id,
                 Err(e) => {
                     let _ = slack
@@ -557,33 +629,47 @@ async fn handle_message(
     );
 
     // Send prompt to agent - response will stream via notifications
-    match agent_manager.prompt(&session.agent_name, prompt_req).await {
-        Ok(resp) => {
-            // Prompt completed - flush any buffered message chunks
-            tracing::info!("Prompt completed with stop_reason: {:?}", resp.stop_reason);
+    // We don't wait for completion to avoid blocking the event loop
+    let agent_manager_clone = agent_manager.clone();
+    let session_manager_clone = session_manager.clone();
+    let slack_clone = slack.clone();
+    let channel = channel.to_string();
+    let thread_ts = thread_ts.map(|s| s.to_string());
+    let thread_key = thread_key.to_string();
+    let session_id = session.session_id.clone();
+    let agent_name = session.agent_name.clone();
 
-            // TODO: optimize this - sleep to ensure all messages are collected
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    tokio::spawn(async move {
+        match agent_manager_clone.prompt(&agent_name, prompt_req).await {
+            Ok(resp) => {
+                // Prompt completed - flush any buffered message chunks
+                tracing::info!("Prompt completed with stop_reason: {:?}", resp.stop_reason);
 
-            if let Some(buffer) = message_buffers.write().await.remove(&session.session_id) {
-                if !buffer.is_empty() {
-                    debug!("Flushing {} chars from message buffer", buffer.len());
-                    let _ = slack.send_message(channel, thread_ts, &buffer).await;
+                // TODO: optimize this - sleep to ensure all messages are collected
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+                if let Some(buffer) = message_buffers.write().await.remove(&session_id) {
+                    if !buffer.is_empty() {
+                        debug!("Flushing {} chars from message buffer", buffer.len());
+                        let _ = slack_clone
+                            .send_message(&channel, thread_ts.as_deref(), &buffer)
+                            .await;
+                    }
                 }
             }
+            Err(e) => {
+                tracing::error!("Failed to send prompt: {}", e);
+                let _ = slack_clone
+                    .send_message(&channel, thread_ts.as_deref(), &format!("Error: {}", e))
+                    .await;
+            }
         }
-        Err(e) => {
-            tracing::error!("Failed to send prompt: {}", e);
-            let _ = slack
-                .send_message(channel, thread_ts, &format!("Error: {}", e))
-                .await;
-        }
-    }
 
-    // Mark session as not busy
-    if let Err(e) = session_manager.set_busy(thread_key, false).await {
-        tracing::error!("Failed to unset session busy: {}", e);
-    }
+        // Mark session as not busy
+        if let Err(e) = session_manager_clone.set_busy(&thread_key, false).await {
+            tracing::error!("Failed to unset session busy: {}", e);
+        }
+    });
 }
 
 /// Handles shell commands (messages starting with !).
