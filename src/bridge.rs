@@ -291,30 +291,10 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 }
 
 fn generate_unified_diff(old_text: &str, new_text: &str) -> String {
-    let old_lines: Vec<&str> = old_text.lines().collect();
-    let new_lines: Vec<&str> = new_text.lines().collect();
+    use similar::TextDiff;
 
-    let mut result = Vec::new();
-    let mut i = 0;
-    let mut j = 0;
-
-    while i < old_lines.len() || j < new_lines.len() {
-        if i < old_lines.len() && j < new_lines.len() && old_lines[i] == new_lines[j] {
-            result.push(format!(" {}", old_lines[i]));
-            i += 1;
-            j += 1;
-        } else {
-            // Simple diff: show removals then additions
-            while i < old_lines.len() && (j >= new_lines.len() || old_lines[i] != new_lines[j]) {
-                result.push(format!("-{}", old_lines[i]));
-                i += 1;
-            }
-            while j < new_lines.len() && (i >= old_lines.len() || old_lines[i] != new_lines[j]) {
-                result.push(format!("+{}", new_lines[j]));
-                j += 1;
-            }
-        }
-    }
-
-    result.join("\n")
+    TextDiff::from_lines(old_text, new_text)
+        .unified_diff()
+        .context_radius(3)
+        .to_string()
 }
