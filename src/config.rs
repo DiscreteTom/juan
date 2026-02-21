@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use toml_scaffold::TomlScaffold;
 use tracing::{debug, trace};
 
-/// Config for [anywhere](https://github.com/DiscreteTom/anywhere)
+/// Config for [juan](https://github.com/DiscreteTom/juan)
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, TomlScaffold)]
 pub struct Config {
     /// Slack workspace connection settings

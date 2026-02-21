@@ -1,11 +1,11 @@
 /// CLI argument parsing using clap.
-/// Defines the command-line interface for the anywhere bridge application.
+/// Defines the command-line interface for the juan bridge application.
 use clap::{Parser, Subcommand};
 
 /// Main CLI arguments structure.
 /// Handles global options and subcommands for the application.
 #[derive(Parser, Debug)]
-#[command(name = "anywhere")]
+#[command(name = "juan")]
 #[command(about = "Chat-to-ACP Bridge", long_about = None)]
 pub struct Args {
     #[command(subcommand)]
@@ -18,7 +18,7 @@ pub enum Command {
     /// Generate a scaffold config file
     Init {
         /// Config file path
-        #[arg(short, long, default_value = "anywhere.toml")]
+        #[arg(short, long, default_value = "juan.toml")]
         config: String,
         /// Override existing file
         #[arg(long)]
@@ -27,7 +27,7 @@ pub enum Command {
     /// Run the bridge
     Run {
         /// Path to the configuration file
-        #[arg(long, default_value = "anywhere.toml")]
+        #[arg(long, default_value = "juan.toml")]
         config: String,
 
         /// Logging level (trace, debug, info, warn, error)

@@ -1,4 +1,4 @@
-# Anywhere - Chat-to-ACP Bridge
+# Juan - Chat-to-ACP Bridge
 
 A self-hosted bridge that allows you to interact with ACP-compatible coding agents through Slack. Run it on your PC to connect your Slack workspace with local or remote AI coding agents.
 
@@ -43,10 +43,10 @@ A self-hosted bridge that allows you to interact with ACP-compatible coding agen
 
 ```bash
 # Create a config file
-anywhere init
+juan init
 
-# Run with default config file (anywhere.toml)
-anywhere run
+# Run with default config file (juan.toml)
+juan run
 ```
 
 ## Interacting with Agents

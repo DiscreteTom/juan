@@ -133,7 +133,7 @@ impl AgentManager {
 
                 // Initialize the agent with ACP protocol
                 let init_req = InitializeRequest::new(ProtocolVersion::LATEST)
-                    .client_info(Implementation::new("anywhere", "0.1.0"));
+                    .client_info(Implementation::new("juan", "0.1.0"));
 
                 match connection.initialize(init_req).await {
                     Ok(_) => info!("Agent {} initialized successfully", agent_name),

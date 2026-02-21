@@ -1,4 +1,4 @@
-/// Main entry point for the anywhere bridge application.
+/// Main entry point for the juan bridge application.
 ///
 /// This module orchestrates the entire application by:
 /// 1. Parsing CLI arguments
