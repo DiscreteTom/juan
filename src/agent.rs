@@ -27,7 +27,6 @@ pub struct AgentManager {
 
 /// Handle for communicating with a spawned agent.
 struct AgentHandle {
-    config: AgentConfig,
     /// Channel for sending commands to the agent's task
     tx: mpsc::UnboundedSender<AgentCommand>,
 }
@@ -167,10 +166,7 @@ impl AgentManager {
             }));
         });
 
-        let handle = AgentHandle {
-            config: config.clone(),
-            tx: cmd_tx,
-        };
+        let handle = AgentHandle { tx: cmd_tx };
 
         self.agents.write().await.insert(agent_name2, handle);
 
