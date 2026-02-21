@@ -1,5 +1,8 @@
 # Juan - Chat-to-ACP Bridge
 
+[![GitHub Release](https://img.shields.io/github/v/release/DiscreteTom/juan)](https://github.com/DiscreteTom/juan/releases)
+[![License](https://img.shields.io/github/license/DiscreteTom/juan)](https://github.com/DiscreteTom/juan/blob/main/LICENSE)
+
 A self-hosted bridge that allows you to interact with ACP-compatible coding agents through Slack. Run it on your PC to connect your Slack workspace with local or remote AI coding agents.
 
 ## Features
@@ -51,25 +54,6 @@ juan run
 
 ## Interacting with Agents
 
-### Commands
-
-Commands start with `#` and can be used to control the bot:
-
-- `#new <name> [workspace]` - Start session with specific agent (creates a new thread). Can only be used in main channel, not in threads.
-- `#agents` - List all available agents with descriptions
-- `#session` - Show current session info (agent, workspace, auto-approve setting). Must be used in an active agent thread.
-- `#end` - End current session and cleanup. Must be used in an active agent thread.
-- `#read <file_path>` - Read local file content and send to agent. Must be used in an active agent thread.
-- `#diff [file_path]` - Show git diff (whole repo if no file specified). Must be used in an active agent thread.
-
-### Shell Commands
-
-Messages starting with `!` will execute shell commands:
-
-- `!ls -la` - List files in current directory
-- `!pwd` - Show current working directory
-- `!git status` - Run any shell command
-
-The output (stdout and stderr) will be sent back to Slack in a code block.
+In your Slack, talk to the Slack APP. Use `#help` to see help.
 
 ## [CHANGELOG](./CHANGELOG.md)

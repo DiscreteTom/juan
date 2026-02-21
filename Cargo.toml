@@ -2,6 +2,10 @@
 name = "juan"
 version = "0.1.0"
 edition = "2024"
+repository = "https://github.com/DiscreteTom/juan"
+license = "MIT"
+description = "A self-hosted bridge that allows you to interact with ACP-compatible coding agents through Slack"
+authors = ["DiscreteTom"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -22,3 +26,11 @@ toml-scaffold = "0.4"
 serde_yaml_ng = "0.10"
 reqwest = "0.13"
 similar = "2"
+
+[target.'cfg(target_env = "musl")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
