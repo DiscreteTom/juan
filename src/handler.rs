@@ -425,22 +425,47 @@ async fn handle_shell_command(
     // Format response with stdout/stderr
     let response = match output {
         Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
+            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
 
             if out.status.success() {
                 if stdout.is_empty() && stderr.is_empty() {
                     "Command executed successfully (no output)".to_string()
+                } else if stderr.is_empty() {
+                    let ticks = crate::utils::safe_backticks(&stdout);
+                    format!("{}\n{}\n{}", ticks, stdout, ticks)
                 } else {
-                    format!("```\n{}{}\n```", stdout, stderr)
+                    let stdout_ticks = crate::utils::safe_backticks(&stdout);
+                    let stderr_ticks = crate::utils::safe_backticks(&stderr);
+                    format!(
+                        "{}\n{}\n{}\n\nStderr:\n{}\n{}\n{}",
+                        stdout_ticks, stdout, stdout_ticks, stderr_ticks, stderr, stderr_ticks
+                    )
                 }
             } else {
-                format!(
-                    "Exit code: {}\n```\n{}{}\n```",
-                    out.status.code().unwrap_or(-1),
-                    stdout,
-                    stderr
-                )
+                if stderr.is_empty() {
+                    let ticks = crate::utils::safe_backticks(&stdout);
+                    format!(
+                        "Exit code: {}\n{}\n{}\n{}",
+                        out.status.code().unwrap_or(-1),
+                        ticks,
+                        stdout,
+                        ticks
+                    )
+                } else {
+                    let stdout_ticks = crate::utils::safe_backticks(&stdout);
+                    let stderr_ticks = crate::utils::safe_backticks(&stderr);
+                    format!(
+                        "Exit code: {}\n{}\n{}\n{}\n\nStderr:\n{}\n{}\n{}",
+                        out.status.code().unwrap_or(-1),
+                        stdout_ticks,
+                        stdout,
+                        stdout_ticks,
+                        stderr_ticks,
+                        stderr,
+                        stderr_ticks
+                    )
+                }
             }
         }
         Err(e) => format!("Failed to execute command: {}", e),
