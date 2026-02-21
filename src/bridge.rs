@@ -97,6 +97,16 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                         }
                     }
                     agent_client_protocol::SessionUpdate::ToolCall(tool_call) => {
+                        // Flush accumulated message chunks before tool call
+                        if let Some(buffer) =
+                            buffers_clone.write().await.remove(&notification.session_id)
+                        {
+                            if !buffer.is_empty() {
+                                let _ = slack_clone
+                                    .send_message(&session.channel, Some(&thread_key), &buffer)
+                                    .await;
+                            }
+                        }
                         trace!(
                             "ToolCall: id={}, title={}, kind={:?}",
                             tool_call.tool_call_id, tool_call.title, tool_call.kind
