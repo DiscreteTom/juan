@@ -38,31 +38,14 @@ A self-hosted bridge that allows you to interact with ACP-compatible coding agen
    - Go to "App Home"
    - Under "Show Tabs", check "Allow users to send Slash commands and messages from the messages tab"
 
-### Configuration Options
-
-- `slack.bot_token`: Your Slack bot token (required)
-- `slack.app_token`: Your Slack app token for Socket Mode (required)
-- `bridge.default_workspace`: Default workspace path for agents (default: `~`)
-- `bridge.auto_approve`: Global auto-approve setting for tool calls (default: `false`)
-- `agents`: Array of agent configurations
-  - `name`: Unique identifier for the agent
-  - `command`: Path to the agent executable
-  - `args`: Command-line arguments for the agent
-  - `description`: Human-readable description
-  - `auto_approve`: Override global auto-approve for this agent (optional)
-  - `env`: Environment variables for the agent (optional)
-
 ## Usage
 
 ```bash
+# Create a config file
+anywhere init
+
 # Run with default config file (anywhere.toml)
 anywhere
-
-# Specify a custom config file
-anywhere --config /path/to/config.toml
-
-# Set log level
-anywhere --log-level debug
 ```
 
 ## Interacting with Agents
