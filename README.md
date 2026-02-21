@@ -1,17 +1,38 @@
-# Juan - Chat-to-ACP Bridge
+# Juan - Slack as ACP Client
 
 [![GitHub Release](https://img.shields.io/github/v/release/DiscreteTom/juan)](https://github.com/DiscreteTom/juan/releases)
 [![License](https://img.shields.io/github/license/DiscreteTom/juan)](https://github.com/DiscreteTom/juan/blob/main/LICENSE)
 
-A self-hosted bridge that allows you to interact with ACP-compatible coding agents through Slack. Run it on your PC to connect your Slack workspace with local or remote AI coding agents.
+A self-hosted bridge that allows you to interact with ACP-compatible coding agents through Slack, so you can code from anywhere. Run it on your PC to connect your Slack workspace with local or remote AI coding agents.
 
-## Features
+## Installation
 
-- **Slack Integration**: Connect via Socket Mode (no public endpoint required)
-- **Multi-Agent Support**: Configure and switch between multiple agents
-- **Session Management**: Thread-based sessions with persistent context
-- **Workspace Context**: Agents work in your local filesystem
-- **Auto-Approval**: Configure per-agent tool call approval settings
+<details open>
+<summary>Linux/macOS</summary>
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/DiscreteTom/juan/releases/latest/download/juan-installer.sh | sh
+```
+
+</details>
+
+<details>
+<summary>Windows</summary>
+
+```sh
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/DiscreteTom/juan/releases/latest/download/juan-installer.ps1 | iex"
+```
+
+</details>
+
+<details>
+<summary>From Source</summary>
+
+```sh
+cargo install --git https://github.com/DiscreteTom/juan
+```
+
+</details>
 
 ## Slack App Setup
 
