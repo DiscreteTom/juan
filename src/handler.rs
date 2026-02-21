@@ -365,9 +365,24 @@ async fn handle_command(
             } else {
                 match std::fs::read_to_string(&full_path) {
                     Ok(content) => {
-                        let ticks = crate::utils::safe_backticks(&content);
-                        let msg = format!("{}:\n{}\n{}\n{}", file_path, ticks, content, ticks);
-                        let _ = slack.send_message(channel, thread_ts, &msg).await;
+                        let msg = format!("📄 File: {}", file_path);
+                        match slack.send_message(channel, thread_ts, &msg).await {
+                            Ok(ts) => {
+                                let _ = slack
+                                    .upload_file(
+                                        channel,
+                                        Some(&ts),
+                                        &content,
+                                        file_path,
+                                        "text",
+                                        Some("Content"),
+                                    )
+                                    .await;
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to send message: {}", e);
+                            }
+                        }
                     }
                     Err(e) => {
                         let _ = slack
@@ -404,9 +419,12 @@ async fn handle_command(
             let mut cmd = std::process::Command::new("git");
             cmd.arg("diff").current_dir(&workspace);
 
-            if parts.len() >= 2 {
+            let file_path = if parts.len() >= 2 {
                 cmd.arg(parts[1]);
-            }
+                Some(parts[1])
+            } else {
+                None
+            };
 
             match cmd.output() {
                 Ok(output) => {
@@ -415,7 +433,29 @@ async fn handle_command(
                         let _ = slack
                             .send_message(channel, thread_ts, "No changes to show.")
                             .await;
+                    } else if let Some(path) = file_path {
+                        // Single file - use file upload
+                        let msg = format!("📝 Diff: {}", path);
+                        match slack.send_message(channel, thread_ts, &msg).await {
+                            Ok(ts) => {
+                                let filename = format!("{}.diff", path.replace('/', "_"));
+                                let _ = slack
+                                    .upload_file(
+                                        channel,
+                                        Some(&ts),
+                                        &diff,
+                                        &filename,
+                                        "diff",
+                                        Some("Diff"),
+                                    )
+                                    .await;
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to send message: {}", e);
+                            }
+                        }
                     } else {
+                        // Whole repo - send as text
                         let ticks = crate::utils::safe_backticks(&diff);
                         let msg = format!("{}\n{}\n{}", ticks, diff, ticks);
                         let _ = slack.send_message(channel, thread_ts, &msg).await;
