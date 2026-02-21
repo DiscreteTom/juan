@@ -38,7 +38,14 @@ pub async fn handle_event(
         } => {
             // Shell commands (!) - execute local commands
             if text.trim().starts_with('!') {
-                handle_shell_command(&text, &channel, thread_ts.as_deref(), slack).await;
+                handle_shell_command(
+                    &text,
+                    &channel,
+                    thread_ts.as_deref(),
+                    slack,
+                    session_manager,
+                )
+                .await;
                 return;
             }
 
@@ -375,6 +382,7 @@ async fn handle_shell_command(
     channel: &str,
     thread_ts: Option<&str>,
     slack: Arc<slack_client::SlackConnection>,
+    session_manager: Arc<session_manager::SessionManager>,
 ) {
     let cmd = text.trim().strip_prefix('!').unwrap_or("").trim();
     debug!("Executing shell command: {}", cmd);
@@ -386,8 +394,26 @@ async fn handle_shell_command(
         return;
     }
 
+    // Get workspace from session if in a thread
+    let workspace = if let Some(thread) = thread_ts {
+        if let Some(session) = session_manager.get_session(thread).await {
+            Some(session_manager.expand_workspace_path(&session.workspace))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Execute command via shell
-    let output = Command::new("sh").arg("-c").arg(cmd).output().await;
+    let mut command = Command::new("sh");
+    command.arg("-c").arg(cmd);
+
+    if let Some(dir) = workspace {
+        command.current_dir(dir);
+    }
+
+    let output = command.output().await;
 
     // Format response with stdout/stderr
     let response = match output {
