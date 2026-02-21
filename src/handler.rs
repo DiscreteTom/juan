@@ -224,7 +224,11 @@ async fn handle_command(
             // Show current session info (only works in threads)
             if thread_ts.is_none() {
                 let _ = slack
-                    .send_message(channel, None, "This command can only be used in a thread.")
+                    .send_message(
+                        channel,
+                        None,
+                        "This command can only be used in an agent thread.",
+                    )
                     .await;
                 return;
             }
@@ -247,7 +251,11 @@ async fn handle_command(
             // End current session (only works in threads)
             if thread_ts.is_none() {
                 let _ = slack
-                    .send_message(channel, None, "This command can only be used in a thread.")
+                    .send_message(
+                        channel,
+                        None,
+                        "This command can only be used in an agent thread.",
+                    )
                     .await;
                 return;
             }
@@ -271,7 +279,11 @@ async fn handle_command(
             // Read file (only works in threads)
             if thread_ts.is_none() {
                 let _ = slack
-                    .send_message(channel, None, "This command can only be used in a thread.")
+                    .send_message(
+                        channel,
+                        None,
+                        "This command can only be used in an agent thread.",
+                    )
                     .await;
                 return;
             }
@@ -346,7 +358,11 @@ async fn handle_command(
             // Show git diff (only works in threads)
             if thread_ts.is_none() {
                 let _ = slack
-                    .send_message(channel, None, "This command can only be used in a thread.")
+                    .send_message(
+                        channel,
+                        None,
+                        "This command can only be used in an agent thread.",
+                    )
                     .await;
                 return;
             }
