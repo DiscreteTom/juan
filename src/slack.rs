@@ -20,7 +20,6 @@ pub enum SlackEvent {
         ts: String,
         thread_ts: Option<String>,
         text: String,
-        user: String,
     },
     /// Message that mentions the bot (e.g., @botname)
     AppMention {
@@ -28,7 +27,6 @@ pub enum SlackEvent {
         ts: String,
         thread_ts: Option<String>,
         text: String,
-        user: String,
     },
 }
 
@@ -184,7 +182,6 @@ async fn handle_push_event(
                         ts: msg.origin.ts.to_string(),
                         thread_ts: msg.origin.thread_ts.map(|ts| ts.to_string()),
                         text,
-                        user,
                     });
                 }
             }
@@ -202,7 +199,6 @@ async fn handle_push_event(
                 ts: mention.origin.ts.to_string(),
                 thread_ts: mention.origin.thread_ts.map(|ts| ts.to_string()),
                 text,
-                user,
             });
         }
         _ => debug!("Unhandled callback event"),
