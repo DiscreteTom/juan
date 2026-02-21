@@ -1,5 +1,6 @@
 use crate::{agent_manager, config, session_manager, slack_client};
 use std::sync::Arc;
+use tokio::process::Command;
 
 pub async fn handle_event(
     event: slack_client::SlackEvent,
@@ -25,6 +26,11 @@ pub async fn handle_event(
             text,
             ..
         } => {
+            if text.trim().starts_with('!') {
+                handle_shell_command(&text, &channel, thread_ts.as_deref(), slack).await;
+                return;
+            }
+
             if text.trim().starts_with('#') {
                 if handle_command(
                     &text,
@@ -302,4 +308,47 @@ async fn handle_message(
             }
         }
     }
+}
+
+async fn handle_shell_command(
+    text: &str,
+    channel: &str,
+    thread_ts: Option<&str>,
+    slack: Arc<slack_client::SlackConnection>,
+) {
+    let cmd = text.trim().strip_prefix('!').unwrap_or("").trim();
+
+    if cmd.is_empty() {
+        let _ = slack
+            .send_message(channel, thread_ts, "Usage: !<command>")
+            .await;
+        return;
+    }
+
+    let output = Command::new("sh").arg("-c").arg(cmd).output().await;
+
+    let response = match output {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+
+            if out.status.success() {
+                if stdout.is_empty() && stderr.is_empty() {
+                    "Command executed successfully (no output)".to_string()
+                } else {
+                    format!("```\n{}{}\n```", stdout, stderr)
+                }
+            } else {
+                format!(
+                    "Exit code: {}\n```\n{}{}\n```",
+                    out.status.code().unwrap_or(-1),
+                    stdout,
+                    stderr
+                )
+            }
+        }
+        Err(e) => format!("Failed to execute command: {}", e),
+    };
+
+    let _ = slack.send_message(channel, thread_ts, &response).await;
 }

@@ -133,6 +133,16 @@ Commands start with `#` and can be used to control the bot:
 - `#read <file_path>` - Read local file content and send to agent. Must be used in a thread.
 - `#diff [file_path]` - Show git diff (whole repo if no file specified). Must be used in a thread.
 
+### Shell Commands
+
+Messages starting with `!` will execute shell commands:
+
+- `!ls -la` - List files in current directory
+- `!pwd` - Show current working directory
+- `!git status` - Run any shell command
+
+The output (stdout and stderr) will be sent back to Slack in a code block.
+
 ### Example Conversation
 
 ```
@@ -143,6 +153,15 @@ Bot: Thinking...
 Bot: Here's a Python function to calculate Fibonacci numbers:
 
 [Agent response with code and explanation]
+
+You: !ls -la
+
+Bot: ```
+total 48
+drwxr-xr-x  6 user user 4096 Feb 21 16:00 .
+drwxr-xr-x 10 user user 4096 Feb 21 15:30 ..
+-rw-r--r--  1 user user  123 Feb 21 16:00 fibonacci.py
+```
 ```
 
 ## Architecture
