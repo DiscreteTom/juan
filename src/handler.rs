@@ -258,9 +258,10 @@ async fn handle_command(
 
             let thread_key = thread_ts.unwrap();
             if let Some(session) = session_manager.get_session(thread_key).await {
+                let status = if session.busy { "busy" } else { "idle" };
                 let msg = format!(
-                    "Current session:\n• Agent: {}\n• Workspace: {}\n• Auto-approve: {}",
-                    session.agent_name, session.workspace, session.auto_approve
+                    "Current session:\n• Agent: {}\n• Workspace: {}\n• Auto-approve: {}\n• Status: {}",
+                    session.agent_name, session.workspace, session.auto_approve, status
                 );
                 let _ = slack.send_message(channel, thread_ts, &msg).await;
             } else {
@@ -471,6 +472,24 @@ async fn handle_message(
         }
     };
 
+    // Check if session is busy
+    if session.busy {
+        let _ = slack
+            .send_message(
+                channel,
+                thread_ts,
+                "Session is busy processing a previous message. Please wait.",
+            )
+            .await;
+        return;
+    }
+
+    // Mark session as busy
+    if let Err(e) = session_manager.set_busy(thread_key, true).await {
+        tracing::error!("Failed to set session busy: {}", e);
+        return;
+    }
+
     debug!(
         "Sending prompt to agent={}, session_id={}",
         session.agent_name, session.session_id
@@ -501,6 +520,11 @@ async fn handle_message(
                 .send_message(channel, thread_ts, &format!("Error: {}", e))
                 .await;
         }
+    }
+
+    // Mark session as not busy
+    if let Err(e) = session_manager.set_busy(thread_key, false).await {
+        tracing::error!("Failed to unset session busy: {}", e);
     }
 }
 

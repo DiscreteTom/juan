@@ -37,6 +37,8 @@ pub struct SessionState {
     pub auto_approve: bool,
     /// Slack channel ID where this session is active
     pub channel: String,
+    /// Whether the session is currently processing a prompt
+    pub busy: bool,
 }
 
 impl SessionManager {
@@ -86,6 +88,7 @@ impl SessionManager {
             workspace,
             auto_approve,
             channel,
+            busy: false,
         };
 
         self.sessions
@@ -100,6 +103,17 @@ impl SessionManager {
     /// Retrieves the session for a given Slack thread.
     pub async fn get_session(&self, thread_key: &str) -> Option<SessionState> {
         self.sessions.read().await.get(thread_key).cloned()
+    }
+
+    /// Sets the busy flag for a session.
+    pub async fn set_busy(&self, thread_key: &str, busy: bool) -> Result<()> {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(thread_key) {
+            session.busy = busy;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Session not found: {}", thread_key))
+        }
     }
 
     /// Ends a session and removes it from tracking.
@@ -133,6 +147,7 @@ impl Clone for SessionState {
             workspace: self.workspace.clone(),
             auto_approve: self.auto_approve,
             channel: self.channel.clone(),
+            busy: self.busy,
         }
     }
 }
