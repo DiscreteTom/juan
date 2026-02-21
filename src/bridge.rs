@@ -101,16 +101,49 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             "ToolCall: id={}, title={}, kind={:?}",
                             tool_call.tool_call_id, tool_call.title, tool_call.kind
                         );
-                        let input_str = tool_call
-                            .raw_input
-                            .as_ref()
-                            .and_then(|v| serde_yaml_ng::to_string(v).ok())
-                            .map(|yaml| {
-                                let ticks = crate::utils::safe_backticks(&yaml);
-                                format!("\nInput: \n{}yaml\n{}\n{}", ticks, yaml, ticks)
-                            })
-                            .unwrap_or_default();
-                        let msg = format!("🔧 Tool: {}{}", tool_call.title, input_str);
+
+                        // Check if there's a diff in content
+                        let has_diff = tool_call.content.iter().any(|item| {
+                            matches!(item, agent_client_protocol::ToolCallContent::Diff(_))
+                        });
+
+                        let input_str = if has_diff {
+                            String::new()
+                        } else {
+                            tool_call
+                                .raw_input
+                                .as_ref()
+                                .and_then(|v| serde_yaml_ng::to_string(v).ok())
+                                .map(|yaml| {
+                                    let ticks = crate::utils::safe_backticks(&yaml);
+                                    format!("\nInput: \n{}yaml\n{}\n{}", ticks, yaml, ticks)
+                                })
+                                .unwrap_or_default()
+                        };
+
+                        let mut msg = format!("🔧 Tool: {}{}", tool_call.title, input_str);
+
+                        // Render content if present
+                        for item in &tool_call.content {
+                            match item {
+                                agent_client_protocol::ToolCallContent::Diff(diff) => {
+                                    let diff_text = format!("{}", diff.new_text);
+                                    let ticks = crate::utils::safe_backticks(&diff_text);
+                                    msg.push_str(&format!(
+                                        "\nOutput:\n{}diff\n{}\n{}",
+                                        ticks, diff_text, ticks
+                                    ));
+                                }
+                                _ => {
+                                    let content_str = format!("{:?}", item);
+                                    let ticks = crate::utils::safe_backticks(&content_str);
+                                    msg.push_str(&format!(
+                                        "\nOutput:\n{}\n{}\n{}",
+                                        ticks, content_str, ticks
+                                    ));
+                                }
+                            }
+                        }
 
                         let tool_call_id = tool_call.tool_call_id.to_string();
                         let mut tool_messages = tool_messages_clone.write().await;
@@ -151,15 +184,30 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     .await
                                     .remove(&update.tool_call_id.to_string())
                                 {
-                                    let input_str = tool_call
-                                        .raw_input
-                                        .as_ref()
-                                        .and_then(|v| serde_yaml_ng::to_string(v).ok())
-                                        .map(|yaml| {
-                                            let ticks = crate::utils::safe_backticks(&yaml);
-                                            format!("\nInput: \n{}yaml\n{}\n{}", ticks, yaml, ticks)
-                                        })
-                                        .unwrap_or_default();
+                                    // Check if there's a diff in content
+                                    let has_diff = tool_call.content.iter().any(|item| {
+                                        matches!(
+                                            item,
+                                            agent_client_protocol::ToolCallContent::Diff(_)
+                                        )
+                                    });
+
+                                    let input_str = if has_diff {
+                                        String::new()
+                                    } else {
+                                        tool_call
+                                            .raw_input
+                                            .as_ref()
+                                            .and_then(|v| serde_yaml_ng::to_string(v).ok())
+                                            .map(|yaml| {
+                                                let ticks = crate::utils::safe_backticks(&yaml);
+                                                format!(
+                                                    "\nInput: \n{}yaml\n{}\n{}",
+                                                    ticks, yaml, ticks
+                                                )
+                                            })
+                                            .unwrap_or_default()
+                                    };
 
                                     let status_icon = match status {
                                         agent_client_protocol::ToolCallStatus::Completed => {
@@ -176,13 +224,28 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                         tool_call.title, status_icon, input_str
                                     );
 
-                                    if let Some(content) = &update.fields.content {
-                                        let content_str = format!("{:?}", content);
-                                        let ticks = crate::utils::safe_backticks(&content_str);
-                                        msg.push_str(&format!(
-                                            "\nOutput:\n{}\n{}\n{}",
-                                            ticks, content_str, ticks
-                                        ));
+                                    // Render content from original tool call
+                                    for item in &tool_call.content {
+                                        match item {
+                                            agent_client_protocol::ToolCallContent::Diff(diff) => {
+                                                let diff_text = format!("{}", diff.new_text);
+                                                let ticks =
+                                                    crate::utils::safe_backticks(&diff_text);
+                                                msg.push_str(&format!(
+                                                    "\nOutput:\n{}diff\n{}\n{}",
+                                                    ticks, diff_text, ticks
+                                                ));
+                                            }
+                                            _ => {
+                                                let content_str = format!("{:?}", item);
+                                                let ticks =
+                                                    crate::utils::safe_backticks(&content_str);
+                                                msg.push_str(&format!(
+                                                    "\nOutput:\n{}\n{}\n{}",
+                                                    ticks, content_str, ticks
+                                                ));
+                                            }
+                                        }
                                     }
 
                                     let _ = slack_clone.update_message(&channel, &ts, &msg).await;
