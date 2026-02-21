@@ -19,3 +19,4 @@ async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["compat"] }
 schemars = "1"
 toml-scaffold = "0.4"
+serde_yaml_ng = "0.10"

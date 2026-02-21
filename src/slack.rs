@@ -115,6 +115,31 @@ impl SlackConnection {
 
         Ok(resp.ts.to_string())
     }
+
+    /// Updates an existing message with new text.
+    /// Requires the channel and timestamp (ts) of the message to update.
+    pub async fn update_message(&self, channel: &str, ts: &str, text: &str) -> Result<()> {
+        debug!(
+            "Updating message: channel={}, ts={}, text_len={}",
+            channel,
+            ts,
+            text.len()
+        );
+        let session = self.client.open_session(&self.bot_token);
+
+        let req = SlackApiChatUpdateRequest::new(
+            channel.into(),
+            SlackMessageContent::new().with_text(text.into()),
+            ts.into(),
+        );
+
+        session
+            .chat_update(&req)
+            .await
+            .context("Failed to update Slack message")?;
+
+        Ok(())
+    }
 }
 
 /// Callback handler for Slack push events (messages, mentions, etc.).

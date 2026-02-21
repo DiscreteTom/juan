@@ -10,6 +10,9 @@ use crate::{agent, config, handler, session, slack};
 /// Shared message buffer for accumulating agent message chunks
 pub type MessageBuffers = Arc<RwLock<HashMap<SessionId, String>>>;
 
+/// Shared map for tracking tool call message timestamps
+pub type ToolCallMessages = Arc<RwLock<HashMap<String, (String, String)>>>; // tool_call_id -> (channel, ts)
+
 pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     info!("Slack bot configured");
     info!("Default workspace: {}", config.bridge.default_workspace);
@@ -39,10 +42,14 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     // Create shared message buffers for accumulating chunks
     let message_buffers: MessageBuffers = Arc::new(RwLock::new(HashMap::new()));
 
+    // Create shared map for tracking tool call messages
+    let tool_call_messages: ToolCallMessages = Arc::new(RwLock::new(HashMap::new()));
+
     // Spawn task to handle agent notifications and forward to Slack
     let slack_clone = slack.clone();
     let session_manager_clone = session_manager.clone();
     let buffers_clone = message_buffers.clone();
+    let tool_messages_clone = tool_call_messages.clone();
     tokio::spawn(async move {
         debug!("Agent notification handler started");
 
@@ -92,20 +99,36 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                         let input_str = tool_call
                             .raw_input
                             .as_ref()
-                            .and_then(|v| serde_json::to_string_pretty(v).ok())
+                            .and_then(|v| serde_yaml_ng::to_string(v).ok())
+                            .map(|yaml| {
+                                let ticks = crate::utils::safe_backticks(&yaml);
+                                format!("{}yaml\n{}\n{}", ticks, yaml, ticks)
+                            })
                             .unwrap_or_else(|| "N/A".to_string());
                         let msg = format!("🔧 Tool: {}\nInput: {}", tool_call.title, input_str);
-                        let _ = slack_clone
+                        if let Ok(ts) = slack_clone
                             .send_message(&session.channel, Some(&thread_key), &msg)
-                            .await;
+                            .await
+                        {
+                            tool_messages_clone.write().await.insert(
+                                tool_call.tool_call_id.to_string(),
+                                (session.channel.clone(), ts),
+                            );
+                        }
                     }
                     agent_client_protocol::SessionUpdate::ToolCallUpdate(update) => {
                         if let Some(status) = update.fields.status {
-                            let msg =
-                                format!("🔧 Tool {} status: {:?}", update.tool_call_id, status);
-                            let _ = slack_clone
-                                .send_message(&session.channel, Some(&thread_key), &msg)
-                                .await;
+                            if matches!(status, agent_client_protocol::ToolCallStatus::Completed) {
+                                if let Some((channel, ts)) = tool_messages_clone
+                                    .write()
+                                    .await
+                                    .remove(&update.tool_call_id.to_string())
+                                {
+                                    let msg =
+                                        format!("🔧 Tool {} - ✅ Completed", update.tool_call_id);
+                                    let _ = slack_clone.update_message(&channel, &ts, &msg).await;
+                                }
+                            }
                         }
                     }
                     _ => {}
