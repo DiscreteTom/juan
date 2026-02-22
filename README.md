@@ -5,6 +5,8 @@
 
 A self-hosted bridge that allows you to interact with ACP-compatible coding agents through Slack, so you can code from anywhere. Run it on your PC to connect your Slack workspace with local or remote AI coding agents.
 
+[![Demo Video](https://img.youtube.com/vi/_ewlQOAx1Zg/0.jpg)](https://youtube.com/shorts/_ewlQOAx1Zg?feature=share)
+
 ## Installation
 
 <details open>
