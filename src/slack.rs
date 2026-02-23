@@ -50,6 +50,14 @@ enum ApiRequest {
         body: Value,
         resp_tx: tokio::sync::oneshot::Sender<Result<Value>>,
     },
+    UploadFile {
+        channel: String,
+        thread_ts: Option<String>,
+        content: String,
+        filename: String,
+        title: Option<String>,
+        resp_tx: tokio::sync::oneshot::Sender<Result<()>>,
+    },
 }
 
 /// Simplified Slack event types used internally by the application.
@@ -115,6 +123,25 @@ impl SlackConnection {
                 ApiRequest::UpdateMessage { body, resp_tx } => {
                     let result =
                         Self::invoke_slack_api_static("chat.update", &body, &bot_token).await;
+                    let _ = resp_tx.send(result);
+                }
+                ApiRequest::UploadFile {
+                    channel,
+                    thread_ts,
+                    content,
+                    filename,
+                    title,
+                    resp_tx,
+                } => {
+                    let result = Self::upload_file_static(
+                        &bot_token,
+                        &channel,
+                        thread_ts.as_deref(),
+                        &content,
+                        &filename,
+                        title.as_deref(),
+                    )
+                    .await;
                     let _ = resp_tx.send(result);
                 }
             }
@@ -227,11 +254,36 @@ impl SlackConnection {
         filename: &str,
         title: Option<&str>,
     ) -> Result<()> {
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+        self.api_tx
+            .send(ApiRequest::UploadFile {
+                channel: channel.to_string(),
+                thread_ts: thread_ts.map(|s| s.to_string()),
+                content: content.to_string(),
+                filename: filename.to_string(),
+                title: title.map(|s| s.to_string()),
+                resp_tx,
+            })
+            .context("Failed to send upload file request")?;
+
+        resp_rx.await.context("Upload file response channel closed")?
+    }
+
+    async fn upload_file_static(
+        bot_token: &str,
+        channel: &str,
+        thread_ts: Option<&str>,
+        content: &str,
+        filename: &str,
+        title: Option<&str>,
+    ) -> Result<()> {
         debug!(
             "Uploading file to channel={}, thread_ts={:?}, filename={}",
             channel, thread_ts, filename
         );
-        let session = self.client.open_session(&self.bot_token);
+        let client = SlackClient::new(SlackClientHyperConnector::new().context("Failed to create Slack client")?);
+        let token = SlackApiToken::new(bot_token.into());
+        let session = client.open_session(&token);
 
         // Step 1: Get upload URL
         let get_url_req =
@@ -242,8 +294,8 @@ impl SlackConnection {
             .context("Failed to get upload URL")?;
 
         // Step 2: Upload file to the URL
-        let client = reqwest::Client::new();
-        client
+        let http_client = reqwest::Client::new();
+        http_client
             .post(url_resp.upload_url.0.as_str())
             .body(content.to_string())
             .send()

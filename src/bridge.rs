@@ -450,8 +450,13 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                         .await
                                         .get(&update.tool_call_id.to_string())
                                     {
-                                        upload_yaml_input(&slack_clone, channel, ts, Some(raw_input))
-                                            .await;
+                                        upload_yaml_input(
+                                            &slack_clone,
+                                            channel,
+                                            ts,
+                                            Some(raw_input),
+                                        )
+                                        .await;
                                     }
                                 }
 
@@ -601,7 +606,13 @@ async fn upload_yaml_input(
         let trimmed = yaml_content.trim();
         if !trimmed.is_empty() && trimmed != "{}" {
             if let Err(e) = slack
-                .upload_file(channel, Some(thread_ts), &yaml_content, "input.yaml", Some("Input"))
+                .upload_file(
+                    channel,
+                    Some(thread_ts),
+                    &yaml_content,
+                    "input.yaml",
+                    Some("Input"),
+                )
                 .await
             {
                 tracing::error!("Failed to upload YAML file: {}", e);
