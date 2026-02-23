@@ -5,7 +5,10 @@ mod shell;
 
 use crate::{
     agent::AgentManager,
-    bridge::{MessageBuffers, PendingPermissions},
+    bridge::{
+        MessageBuffers, PendingPermissions, PlanBuffers, PlanMessages, RealPlanSessions,
+        ThoughtPlanBuffers, ThoughtPlanCompleted,
+    },
     config::Config,
     handler::{
         command::handle_command, message::handle_message, permission::handle_permission_response,
@@ -27,6 +30,11 @@ pub async fn handle_event(
     session_manager: Arc<SessionManager>,
     message_buffers: MessageBuffers,
     pending_permissions: PendingPermissions,
+    plan_buffers: PlanBuffers,
+    plan_messages: PlanMessages,
+    real_plan_sessions: RealPlanSessions,
+    thought_plan_buffers: ThoughtPlanBuffers,
+    thought_plan_completed: ThoughtPlanCompleted,
 ) {
     tracing::info!("Received event: {:?}", event);
 
@@ -107,6 +115,11 @@ pub async fn handle_event(
                 agent_manager,
                 session_manager,
                 message_buffers,
+                plan_buffers,
+                plan_messages,
+                real_plan_sessions,
+                thought_plan_buffers,
+                thought_plan_completed,
             )
             .await;
         }

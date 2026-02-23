@@ -5,6 +5,7 @@
 /// - SlackEvent: Simplified event types for the application
 /// - Socket Mode listener for receiving events from Slack
 use anyhow::{Context, Result};
+use serde_json::{Value, json};
 use slack_morphism::prelude::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -189,6 +190,7 @@ pub enum SlackEvent {
 pub struct SlackConnection {
     client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
     bot_token: SlackApiToken,
+    bot_token_raw: String,
 }
 
 impl SlackConnection {
@@ -199,7 +201,8 @@ impl SlackConnection {
 
         Self {
             client,
-            bot_token: SlackApiToken::new(bot_token.into()),
+            bot_token: SlackApiToken::new(bot_token.clone().into()),
+            bot_token_raw: bot_token,
         }
     }
 
@@ -373,6 +376,111 @@ impl SlackConnection {
         debug!("File uploaded successfully: {:?}", resp);
 
         Ok(())
+    }
+
+    pub async fn send_message_with_blocks(
+        &self,
+        channel: &str,
+        thread_ts: Option<&str>,
+        text: &str,
+        blocks: Vec<Value>,
+    ) -> Result<String> {
+        let text = normalize_markdown_for_slack(text);
+        let mut body = json!({
+            "channel": channel,
+            "text": text,
+            "blocks": blocks
+        });
+
+        if let Some(thread_ts) = thread_ts {
+            body.as_object_mut()
+                .context("Failed to build chat.postMessage body")?
+                .insert(
+                    "thread_ts".to_string(),
+                    Value::String(thread_ts.to_string()),
+                );
+        }
+
+        let resp = self.invoke_slack_api("chat.postMessage", &body).await?;
+        let ts = resp
+            .get("ts")
+            .and_then(Value::as_str)
+            .context("Slack chat.postMessage response missing ts")?;
+        Ok(ts.to_string())
+    }
+
+    pub async fn update_message_with_blocks(
+        &self,
+        channel: &str,
+        ts: &str,
+        text: &str,
+        blocks: Vec<Value>,
+    ) -> Result<()> {
+        let text = normalize_markdown_for_slack(text);
+        let body = json!({
+            "channel": channel,
+            "ts": ts,
+            "text": text,
+            "blocks": blocks
+        });
+
+        self.invoke_slack_api("chat.update", &body).await?;
+        Ok(())
+    }
+
+    async fn invoke_slack_api(&self, method: &str, body: &Value) -> Result<Value> {
+        let uri = format!("https://slack.com/api/{method}");
+        let client = reqwest::Client::new();
+
+        let resp = client
+            .post(uri)
+            .bearer_auth(&self.bot_token_raw)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            )
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("Failed to call Slack API method {method}"))?;
+
+        let status = resp.status();
+        let parsed: Value = resp
+            .json()
+            .await
+            .with_context(|| format!("Failed to parse Slack API response for {method}"))?;
+
+        if !status.is_success() {
+            anyhow::bail!("Slack API {method} returned HTTP {status}: {parsed}");
+        }
+
+        if parsed.get("ok").and_then(Value::as_bool) != Some(true) {
+            let err = parsed
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown_error");
+
+            let details = parsed
+                .get("response_metadata")
+                .and_then(|v| v.get("messages"))
+                .and_then(Value::as_array)
+                .map(|messages| {
+                    messages
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+                .filter(|s| !s.is_empty());
+
+            if let Some(details) = details {
+                anyhow::bail!("Slack API {method} failed: {err} | {details}");
+            }
+
+            anyhow::bail!("Slack API {method} failed: {err}");
+        }
+
+        Ok(parsed)
     }
 }
 
