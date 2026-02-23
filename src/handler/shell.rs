@@ -1,4 +1,4 @@
-use crate::{session, slack};
+use crate::{config, session, slack};
 use std::sync::Arc;
 use tokio::process::Command;
 use tracing::debug;
@@ -10,6 +10,7 @@ pub async fn handle_shell_command(
     channel: &str,
     thread_ts: Option<&str>,
     slack: Arc<slack::SlackConnection>,
+    config: Arc<config::Config>,
     session_manager: Arc<session::SessionManager>,
 ) {
     let cmd = text.trim().strip_prefix('!').unwrap_or("").trim();
@@ -22,15 +23,15 @@ pub async fn handle_shell_command(
         return;
     }
 
-    // Get workspace from session if in a thread
+    // Get workspace from session if in a thread, otherwise use default workspace
     let workspace = if let Some(thread) = thread_ts {
         if let Some(session) = session_manager.get_session(thread).await {
-            Some(crate::utils::expand_path(&session.workspace))
+            crate::utils::expand_path(&session.workspace)
         } else {
-            None
+            crate::utils::expand_path(&config.bridge.default_workspace)
         }
     } else {
-        None
+        crate::utils::expand_path(&config.bridge.default_workspace)
     };
 
     // Execute command via shell
@@ -44,9 +45,7 @@ pub async fn handle_shell_command(
         sh_process
     };
 
-    if let Some(dir) = workspace {
-        command.current_dir(dir);
-    }
+    command.current_dir(workspace);
 
     let output = command.output().await;
 

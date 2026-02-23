@@ -75,6 +75,7 @@ pub async fn handle_event(
                     &channel,
                     thread_ts.as_deref(),
                     slack,
+                    config.clone(),
                     session_manager,
                 )
                 .await;

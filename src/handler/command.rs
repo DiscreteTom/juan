@@ -252,17 +252,6 @@ pub async fn handle_command(
         }
         "#read" => {
             debug!("Processing #read command in thread_ts={:?}", thread_ts);
-            // Read file (only works in threads)
-            if thread_ts.is_none() {
-                let _ = slack
-                    .send_message(
-                        channel,
-                        None,
-                        "This command can only be used in an agent thread.",
-                    )
-                    .await;
-                return;
-            }
 
             if parts.len() < 2 {
                 let _ = slack
@@ -271,17 +260,19 @@ pub async fn handle_command(
                 return;
             }
 
-            let thread_key = thread_ts.unwrap();
-            let session = session_manager.get_session(thread_key).await;
-            if session.is_none() {
-                let _ = slack
-                    .send_message(channel, thread_ts, "No active session in this thread.")
-                    .await;
-                return;
-            }
-
             let file_path = parts[1];
-            let workspace = crate::utils::expand_path(&session.unwrap().workspace);
+
+            // Get workspace from session if in a thread, otherwise use default workspace
+            let workspace = if let Some(thread_key) = thread_ts {
+                if let Some(session) = session_manager.get_session(thread_key).await {
+                    crate::utils::expand_path(&session.workspace)
+                } else {
+                    crate::utils::expand_path(&config.bridge.default_workspace)
+                }
+            } else {
+                crate::utils::expand_path(&config.bridge.default_workspace)
+            };
+
             let full_path = std::path::Path::new(&workspace).join(file_path);
 
             if full_path.is_dir() {
