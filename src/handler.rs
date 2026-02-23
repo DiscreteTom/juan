@@ -74,6 +74,11 @@ pub async fn handle_event(
     session_manager: Arc<session::SessionManager>,
     message_buffers: bridge::MessageBuffers,
     pending_permissions: bridge::PendingPermissions,
+    plan_buffers: bridge::PlanBuffers,
+    plan_messages: bridge::PlanMessages,
+    real_plan_sessions: bridge::RealPlanSessions,
+    thought_plan_buffers: bridge::ThoughtPlanBuffers,
+    thought_plan_completed: bridge::ThoughtPlanCompleted,
 ) {
     tracing::info!("Received event: {:?}", event);
 
@@ -153,6 +158,11 @@ pub async fn handle_event(
                 agent_manager,
                 session_manager,
                 message_buffers,
+                plan_buffers,
+                plan_messages,
+                real_plan_sessions,
+                thought_plan_buffers,
+                thought_plan_completed,
             )
             .await;
         }
@@ -579,6 +589,11 @@ async fn handle_message(
     agent_manager: Arc<agent::AgentManager>,
     session_manager: Arc<session::SessionManager>,
     message_buffers: bridge::MessageBuffers,
+    plan_buffers: bridge::PlanBuffers,
+    plan_messages: bridge::PlanMessages,
+    real_plan_sessions: bridge::RealPlanSessions,
+    thought_plan_buffers: bridge::ThoughtPlanBuffers,
+    thought_plan_completed: bridge::ThoughtPlanCompleted,
 ) {
     let thread_key = thread_ts.unwrap_or(channel);
     debug!(
@@ -616,6 +631,15 @@ async fn handle_message(
         tracing::error!("Failed to set session busy: {}", e);
         return;
     }
+
+    // Reset per-prompt plan UI state so each user message gets its own plan block lifecycle.
+    let session_id = session.session_id.clone();
+    message_buffers.write().await.remove(&session_id);
+    plan_buffers.write().await.remove(&session_id);
+    plan_messages.write().await.remove(&session_id);
+    real_plan_sessions.write().await.remove(&session_id);
+    thought_plan_buffers.write().await.remove(&session_id);
+    thought_plan_completed.write().await.remove(&session_id);
 
     debug!(
         "Sending prompt to agent={}, session_id={}",

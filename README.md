@@ -75,6 +75,15 @@ juan init
 juan run
 ```
 
+`juan init` includes this bridge config scaffold:
+
+```toml
+[bridge]
+default_workspace = "~"
+auto_approve = false
+plan_display_mode = "full" # "full" | "incremental"
+```
+
 ## Interacting with Agents
 
 In your Slack, talk to the Slack APP. Use `#help` to see help.

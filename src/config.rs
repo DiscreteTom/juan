@@ -32,6 +32,13 @@ pub struct BridgeConfig {
     pub default_workspace: String,
     /// Global auto-approve setting for tool calls
     pub auto_approve: bool,
+    /// How to display plan updates in Slack: "full" or "incremental"
+    #[serde(default = "default_plan_display_mode")]
+    pub plan_display_mode: String,
+}
+
+fn default_plan_display_mode() -> String {
+    "full".to_string()
 }
 
 /// Agent configuration
@@ -91,6 +98,7 @@ impl Config {
             bridge: BridgeConfig {
                 default_workspace: "~".into(),
                 auto_approve: false,
+                plan_display_mode: default_plan_display_mode(),
             },
             agents: vec![
                 AgentConfig {
@@ -123,6 +131,10 @@ impl Config {
         anyhow::ensure!(
             !self.agents.is_empty(),
             "At least one agent must be configured"
+        );
+        anyhow::ensure!(
+            matches!(self.bridge.plan_display_mode.as_str(), "full" | "incremental"),
+            "bridge.plan_display_mode must be either \"full\" or \"incremental\""
         );
 
         for agent in &self.agents {

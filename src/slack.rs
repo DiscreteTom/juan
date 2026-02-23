@@ -5,10 +5,143 @@
 /// - SlackEvent: Simplified event types for the application
 /// - Socket Mode listener for receiving events from Slack
 use anyhow::{Context, Result};
+use serde_json::{Value, json};
 use slack_morphism::prelude::*;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace};
+
+fn convert_markdown_emphasis_segment(segment: &str) -> String {
+    fn starts_with_at(text: &str, i: usize, pat: &str) -> bool {
+        text.get(i..)
+            .map(|rest| rest.starts_with(pat))
+            .unwrap_or(false)
+    }
+
+    let mut out = String::with_capacity(segment.len());
+    let mut i = 0;
+
+    while i < segment.len() {
+        if starts_with_at(segment, i, "**") {
+            let rest = match segment.get(i + 2..) {
+                Some(r) => r,
+                None => "",
+            };
+            if let Some(end_rel) = rest.find("**") {
+                let inner = &rest[..end_rel];
+                if !inner.trim().is_empty() {
+                    out.push('*');
+                    out.push_str(inner);
+                    out.push('*');
+                    i += 2 + end_rel + 2;
+                    continue;
+                }
+            }
+        }
+
+        if starts_with_at(segment, i, "__") {
+            let rest = match segment.get(i + 2..) {
+                Some(r) => r,
+                None => "",
+            };
+            if let Some(end_rel) = rest.find("__") {
+                let inner = &rest[..end_rel];
+                if !inner.trim().is_empty() {
+                    out.push('*');
+                    out.push_str(inner);
+                    out.push('*');
+                    i += 2 + end_rel + 2;
+                    continue;
+                }
+            }
+        }
+
+        if starts_with_at(segment, i, "*") {
+            let rest = match segment.get(i + 1..) {
+                Some(r) => r,
+                None => "",
+            };
+            if let Some(first) = rest.chars().next() {
+                if !first.is_whitespace() {
+                    if let Some(end_rel) = rest.find('*') {
+                        let inner = &rest[..end_rel];
+                        if !inner.trim().is_empty() && !inner.ends_with(' ') {
+                            out.push('_');
+                            out.push_str(inner);
+                            out.push('_');
+                            i += 1 + end_rel + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(ch) = segment.get(i..).and_then(|rest| rest.chars().next()) {
+            out.push(ch);
+            i += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    out
+}
+
+fn normalize_inline_markdown_for_slack(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut buf = String::new();
+    let mut in_inline_code = false;
+
+    for ch in line.chars() {
+        if ch == '`' {
+            if in_inline_code {
+                out.push_str(&buf);
+                buf.clear();
+                out.push('`');
+                in_inline_code = false;
+            } else {
+                out.push_str(&convert_markdown_emphasis_segment(&buf));
+                buf.clear();
+                out.push('`');
+                in_inline_code = true;
+            }
+        } else {
+            buf.push(ch);
+        }
+    }
+
+    if in_inline_code {
+        out.push_str(&buf);
+    } else {
+        out.push_str(&convert_markdown_emphasis_segment(&buf));
+    }
+
+    out
+}
+
+fn normalize_markdown_for_slack(text: &str) -> String {
+    let mut out_lines = Vec::new();
+    let mut in_fenced_code = false;
+
+    for line in text.replace('\r', "").lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fenced_code = !in_fenced_code;
+            out_lines.push(line.to_string());
+            continue;
+        }
+
+        if in_fenced_code {
+            out_lines.push(line.to_string());
+            continue;
+        }
+
+        out_lines.push(normalize_inline_markdown_for_slack(line));
+    }
+
+    out_lines.join("\n")
+}
 
 /// Simplified Slack event types used internally by the application.
 /// Converts from slack_morphism's complex event types to our domain model.
@@ -35,6 +168,7 @@ pub enum SlackEvent {
 pub struct SlackConnection {
     client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
     bot_token: SlackApiToken,
+    bot_token_raw: String,
 }
 
 impl SlackConnection {
@@ -45,7 +179,8 @@ impl SlackConnection {
 
         Self {
             client,
-            bot_token: SlackApiToken::new(bot_token.into()),
+            bot_token: SlackApiToken::new(bot_token.clone().into()),
+            bot_token_raw: bot_token,
         }
     }
 
@@ -89,6 +224,7 @@ impl SlackConnection {
         thread_ts: Option<&str>,
         text: &str,
     ) -> Result<String> {
+        let text = normalize_markdown_for_slack(text);
         debug!(
             "Sending message to channel={}, thread_ts={:?}, text_len={}",
             channel,
@@ -101,7 +237,9 @@ impl SlackConnection {
         let mut req = SlackApiChatPostMessageRequest::new(
             channel.into(),
             SlackMessageContent::new().with_text(text.into()),
-        );
+        )
+        // Force Slack's markdown parsing mode explicitly instead of relying on defaults.
+        .with_parse("none".into());
 
         // If thread_ts is provided, send as a reply in that thread
         if let Some(ts) = thread_ts {
@@ -119,6 +257,7 @@ impl SlackConnection {
     /// Updates an existing message with new text.
     /// Requires the channel and timestamp (ts) of the message to update.
     pub async fn update_message(&self, channel: &str, ts: &str, text: &str) -> Result<()> {
+        let text = normalize_markdown_for_slack(text);
         debug!(
             "Updating message: channel={}, ts={}, text_len={}",
             channel,
@@ -131,13 +270,66 @@ impl SlackConnection {
             channel.into(),
             SlackMessageContent::new().with_text(text.into()),
             ts.into(),
-        );
+        )
+        // Keep update behavior consistent with chat.postMessage formatting.
+        .with_parse("none".into());
 
         session
             .chat_update(&req)
             .await
             .context("Failed to update Slack message")?;
 
+        Ok(())
+    }
+
+    /// Sends a Slack message using raw Web API payload so unsupported block types
+    /// (e.g. type="plan") can be passed through unchanged.
+    pub async fn send_message_with_blocks(
+        &self,
+        channel: &str,
+        thread_ts: Option<&str>,
+        text: &str,
+        blocks: Vec<Value>,
+    ) -> Result<String> {
+        let text = normalize_markdown_for_slack(text);
+        let mut body = json!({
+            "channel": channel,
+            "text": text,
+            "blocks": blocks
+        });
+
+        if let Some(thread_ts) = thread_ts {
+            body.as_object_mut()
+                .context("Failed to build chat.postMessage body")?
+                .insert("thread_ts".to_string(), Value::String(thread_ts.to_string()));
+        }
+
+        let resp = self.invoke_slack_api("chat.postMessage", &body).await?;
+        let ts = resp
+            .get("ts")
+            .and_then(Value::as_str)
+            .context("Slack chat.postMessage response missing ts")?;
+        Ok(ts.to_string())
+    }
+
+    /// Updates a Slack message using raw Web API payload so unsupported block types
+    /// (e.g. type="plan") can be passed through unchanged.
+    pub async fn update_message_with_blocks(
+        &self,
+        channel: &str,
+        ts: &str,
+        text: &str,
+        blocks: Vec<Value>,
+    ) -> Result<()> {
+        let text = normalize_markdown_for_slack(text);
+        let body = json!({
+            "channel": channel,
+            "ts": ts,
+            "text": text,
+            "blocks": blocks
+        });
+
+        self.invoke_slack_api("chat.update", &body).await?;
         Ok(())
     }
 
@@ -199,6 +391,58 @@ impl SlackConnection {
         debug!("File uploaded successfully: {:?}", resp);
 
         Ok(())
+    }
+
+    async fn invoke_slack_api(&self, method: &str, body: &Value) -> Result<Value> {
+        let uri = format!("https://slack.com/api/{method}");
+        let client = reqwest::Client::new();
+
+        let resp = client
+            .post(uri)
+            .bearer_auth(&self.bot_token_raw)
+            .header(reqwest::header::CONTENT_TYPE, "application/json; charset=utf-8")
+            .json(body)
+            .send()
+            .await
+            .with_context(|| format!("Failed to call Slack API method {method}"))?;
+
+        let status = resp.status();
+        let parsed: Value = resp
+            .json()
+            .await
+            .with_context(|| format!("Failed to parse Slack API response for {method}"))?;
+
+        if !status.is_success() {
+            anyhow::bail!("Slack API {method} returned HTTP {status}: {parsed}");
+        }
+
+        if parsed.get("ok").and_then(Value::as_bool) != Some(true) {
+            let err = parsed
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown_error");
+
+            let details = parsed
+                .get("response_metadata")
+                .and_then(|v| v.get("messages"))
+                .and_then(Value::as_array)
+                .map(|messages| {
+                    messages
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+                .filter(|s| !s.is_empty());
+
+            if let Some(details) = details {
+                anyhow::bail!("Slack API {method} failed: {err} | {details}");
+            }
+
+            anyhow::bail!("Slack API {method} failed: {err}");
+        }
+
+        Ok(parsed)
     }
 }
 
