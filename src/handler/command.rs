@@ -99,6 +99,19 @@ pub async fn handle_command(
                 .clone()
                 .unwrap_or_else(|| config.bridge.default_workspace.clone());
             let workspace_path = crate::utils::expand_path(&workspace_path);
+
+            // Validate workspace exists
+            if !std::path::Path::new(&workspace_path).is_dir() {
+                let _ = slack
+                    .send_message(
+                        channel,
+                        Some(ts),
+                        &format!("Workspace does not exist: {}", workspace_path),
+                    )
+                    .await;
+                return;
+            }
+
             let new_session_req = agent_client_protocol::NewSessionRequest::new(workspace_path);
 
             let session_id = match agent_manager
