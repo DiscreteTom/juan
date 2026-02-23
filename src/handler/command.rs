@@ -3,19 +3,19 @@ use std::sync::Arc;
 use tracing::debug;
 
 const HELP_MESSAGE: &str = "Available commands:
-• #help - Show this help message
-• #new <agent> [workspace] - Start a new agent session
-• #agents - List available agents
-• #session - Show current agent session info
-• #sessions - Show all active sessions
-• #end - End current agent session
-• #read <file_path> - Read local file content
-• #diff [args] - Show git diff
-• #mode - Show available modes and current mode
-• #mode <value> - Switch to a different mode
-• #model - Show available models and current model
-• #model <value> - Switch to a different model
-• !<command> - Execute shell command";
+- #help - Show this help message
+- #new <agent> [workspace] - Start a new agent session
+- #agents - List available agents
+- #session - Show current agent session info
+- #sessions - Show all active sessions
+- #end - End current agent session
+- #read <file_path> - Read local file content
+- #diff [args] - Show git diff
+- #mode - Show available modes and current mode
+- #mode <value> - Switch to a different mode
+- #model - Show available models and current model
+- #model <value> - Switch to a different model
+- !<command> - Execute shell command";
 
 /// Handles bot commands (messages starting with #).
 pub async fn handle_command(
