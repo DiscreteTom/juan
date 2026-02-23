@@ -528,47 +528,26 @@ async fn upsert_plan_message(
 ) -> Result<()> {
     let fallback_text = format_plan_message(entries);
     let plan_block = build_plan_block_payload(entries);
-    let existing = plan_messages.read().await.get(session_id).cloned();
 
-    if let Some((msg_channel, msg_ts)) = existing {
-        if let Err(e) = slack
-            .update_message_with_blocks(
-                &msg_channel,
-                &msg_ts,
-                &fallback_text,
-                vec![plan_block.clone()],
-            )
-            .await
-        {
+    let ts = match slack
+        .send_message_with_blocks(channel, Some(thread_key), &fallback_text, vec![plan_block])
+        .await
+    {
+        Ok(ts) => ts,
+        Err(e) => {
             warn!(
-                "Failed to update plan block message, falling back to text update: {}",
+                "Failed to send plan block message, falling back to text message: {}",
                 e
             );
             slack
-                .update_message(&msg_channel, &msg_ts, &fallback_text)
-                .await?;
+                .send_message(channel, Some(thread_key), &fallback_text)
+                .await?
         }
-    } else {
-        let ts = match slack
-            .send_message_with_blocks(channel, Some(thread_key), &fallback_text, vec![plan_block])
-            .await
-        {
-            Ok(ts) => ts,
-            Err(e) => {
-                warn!(
-                    "Failed to send plan block message, falling back to text message: {}",
-                    e
-                );
-                slack
-                    .send_message(channel, Some(thread_key), &fallback_text)
-                    .await?
-            }
-        };
-        plan_messages
-            .write()
-            .await
-            .insert(session_id.clone(), (channel.to_string(), ts));
-    }
+    };
+    plan_messages
+        .write()
+        .await
+        .insert(session_id.clone(), (channel.to_string(), ts));
 
     Ok(())
 }
