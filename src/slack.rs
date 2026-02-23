@@ -169,6 +169,7 @@ impl SlackConnection {
 
         let app_token = SlackApiToken::new(app_token.into());
         listener.listen_for(&app_token).await?;
+        info!("Slack Socket Mode connected");
         listener.serve().await;
 
         Ok(())
