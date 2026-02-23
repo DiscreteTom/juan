@@ -10,6 +10,28 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace};
 
+/// Encode special characters for Slack messages.
+/// Only encodes &, <, and > as per Slack's documentation.
+/// https://docs.slack.dev/messaging/formatting-message-text/
+fn encode_slack_text(text: &str) -> String {
+    trace!("Before encode: {}", text);
+    let encoded = text
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    trace!("After encode: {}", encoded);
+    encoded
+}
+
+/// Decode special characters from Slack messages.
+/// Only decodes &amp;, &lt;, and &gt; as per Slack's documentation.
+/// https://docs.slack.dev/messaging/formatting-message-text/
+fn decode_slack_text(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
 /// Simplified Slack event types used internally by the application.
 /// Converts from slack_morphism's complex event types to our domain model.
 #[derive(Debug, Clone)]
@@ -98,9 +120,10 @@ impl SlackConnection {
         trace!("Message text: {}", text);
         let session = self.client.open_session(&self.bot_token);
 
+        let encoded_text = encode_slack_text(text);
         let mut req = SlackApiChatPostMessageRequest::new(
             channel.into(),
-            SlackMessageContent::new().with_text(text.into()),
+            SlackMessageContent::new().with_text(encoded_text.into()),
         );
 
         // If thread_ts is provided, send as a reply in that thread
@@ -127,9 +150,10 @@ impl SlackConnection {
         );
         let session = self.client.open_session(&self.bot_token);
 
+        let encoded_text = encode_slack_text(text);
         let req = SlackApiChatUpdateRequest::new(
             channel.into(),
-            SlackMessageContent::new().with_text(text.into()),
+            SlackMessageContent::new().with_text(encoded_text.into()),
             ts.into(),
         );
 
@@ -246,7 +270,7 @@ async fn handle_push_event(
 
             if let Some(content) = msg.content {
                 if let Some(text) = content.text {
-                    let text = html_escape::decode_html_entities(&text).to_string();
+                    let text = decode_slack_text(&text);
                     let user = msg.sender.user.map(|u| u.to_string()).unwrap_or_default();
                     debug!(
                         "Received message from user={}, channel={:?}",
@@ -268,7 +292,7 @@ async fn handle_push_event(
         SlackEventCallbackBody::AppMention(mention) => {
             let user = mention.user.to_string();
             let text = mention.content.text.unwrap_or_default();
-            let text = html_escape::decode_html_entities(&text).to_string();
+            let text = decode_slack_text(&text);
             debug!(
                 "Received app mention from user={}, channel={}",
                 user, mention.channel
