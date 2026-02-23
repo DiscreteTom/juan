@@ -192,7 +192,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     Some(&msg_ts),
                                     &yaml_content,
                                     "input.yaml",
-                                    "yaml",
                                     Some("Input"),
                                 )
                                 .await
@@ -235,7 +234,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                         Some(&msg_ts),
                                         &diff_text,
                                         &filename,
-                                        "diff",
                                         Some("Diff"),
                                     )
                                     .await

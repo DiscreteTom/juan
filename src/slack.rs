@@ -184,14 +184,12 @@ impl SlackConnection {
     }
 
     /// Uploads a file/snippet to Slack with syntax highlighting.
-    /// The filetype determines the syntax highlighting (e.g., "diff", "yaml", "python").
     pub async fn upload_file(
         &self,
         channel: &str,
         thread_ts: Option<&str>,
         content: &str,
         filename: &str,
-        _filetype: &str,
         title: Option<&str>,
     ) -> Result<()> {
         debug!(

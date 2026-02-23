@@ -325,7 +325,6 @@ pub async fn handle_command(
                                         Some(&ts),
                                         &content,
                                         file_path,
-                                        "text",
                                         Some("Content"),
                                     )
                                     .await;
@@ -391,14 +390,7 @@ pub async fn handle_command(
                             Ok(ts) => {
                                 let filename = format!("{}.diff", path.replace('/', "_"));
                                 let _ = slack
-                                    .upload_file(
-                                        channel,
-                                        Some(&ts),
-                                        &diff,
-                                        &filename,
-                                        "diff",
-                                        Some("Diff"),
-                                    )
+                                    .upload_file(channel, Some(&ts), &diff, &filename, Some("Diff"))
                                     .await;
                             }
                             Err(e) => {
@@ -416,7 +408,6 @@ pub async fn handle_command(
                                         Some(&ts),
                                         &diff,
                                         "repo.diff",
-                                        "diff",
                                         Some("Diff"),
                                     )
                                     .await;
