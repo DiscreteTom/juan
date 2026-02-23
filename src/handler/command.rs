@@ -11,6 +11,10 @@ const HELP_MESSAGE: &str = "Available commands:
 • #end - End current agent session
 • #read <file_path> - Read local file content
 • #diff [args] - Show git diff
+• #mode - Show available modes and current mode
+• #mode <value> - Switch to a different mode
+• #model - Show available models and current model
+• #model <value> - Switch to a different model
 • !<command> - Execute shell command";
 
 /// Handles bot commands (messages starting with #).
@@ -101,7 +105,18 @@ pub async fn handle_command(
                 .new_session(agent_name, new_session_req, agent_config.auto_approve)
                 .await
             {
-                Ok(resp) => resp.session_id,
+                Ok(resp) => {
+                    // Store initial config options if provided
+                    if let Some(config_options) = resp.config_options.clone() {
+                        if let Err(e) = session_manager
+                            .update_config_options(ts, config_options)
+                            .await
+                        {
+                            debug!("Failed to store initial config options: {}", e);
+                        }
+                    }
+                    resp.session_id
+                }
                 Err(e) => {
                     let _ = slack
                         .send_message(
@@ -405,6 +420,298 @@ pub async fn handle_command(
                             thread_ts,
                             &format!("Error running git diff: {}", e),
                         )
+                        .await;
+                }
+            }
+        }
+        "#mode" => {
+            debug!("Processing #mode command in thread_ts={:?}", thread_ts);
+            if thread_ts.is_none() {
+                let _ = slack
+                    .send_message(
+                        channel,
+                        None,
+                        "This command can only be used in an agent thread.",
+                    )
+                    .await;
+                return;
+            }
+
+            let thread_key = thread_ts.unwrap();
+            let session = session_manager.get_session(thread_key).await;
+            if session.is_none() {
+                let _ = slack
+                    .send_message(channel, thread_ts, "No active session in this thread.")
+                    .await;
+                return;
+            }
+
+            let session = session.unwrap();
+            if parts.len() < 2 {
+                // Show available modes
+                if let Some(config_options) = &session.config_options {
+                    if let Some(mode_option) = config_options.iter().find(|opt| {
+                        matches!(
+                            opt.category,
+                            Some(agent_client_protocol::SessionConfigOptionCategory::Mode)
+                        )
+                    }) {
+                        if let agent_client_protocol::SessionConfigKind::Select(select) =
+                            &mode_option.kind
+                        {
+                            let current = &select.current_value;
+                            let options = match &select.options {
+                                agent_client_protocol::SessionConfigSelectOptions::Ungrouped(
+                                    opts,
+                                ) => opts
+                                    .iter()
+                                    .map(|opt| {
+                                        let marker =
+                                            if opt.value == *current { "→" } else { " " };
+                                        format!(
+                                            "{} `{}` - {}",
+                                            marker,
+                                            opt.value,
+                                            opt.description.as_deref().unwrap_or(&opt.name)
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
+                                agent_client_protocol::SessionConfigSelectOptions::Grouped(
+                                    groups,
+                                ) => groups
+                                    .iter()
+                                    .map(|group| {
+                                        let opts = group
+                                            .options
+                                            .iter()
+                                            .map(|opt| {
+                                                let marker =
+                                                    if opt.value == *current { "→" } else { " " };
+                                                format!(
+                                                    "{} `{}` - {}",
+                                                    marker,
+                                                    opt.value,
+                                                    opt.description.as_deref().unwrap_or(&opt.name)
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n");
+                                        format!("*{}*\n{}", group.name, opts)
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n\n"),
+                                _ => String::from("Unknown option format"),
+                            };
+                            let msg = format!("Available modes:\n{}", options);
+                            let _ = slack.send_message(channel, thread_ts, &msg).await;
+                        } else {
+                            let _ = slack
+                                .send_message(channel, thread_ts, "Mode option is not a selector.")
+                                .await;
+                        }
+                    } else {
+                        let _ = slack
+                            .send_message(channel, thread_ts, "No mode configuration available.")
+                            .await;
+                    }
+                } else {
+                    let _ = slack
+                        .send_message(channel, thread_ts, "No configuration options available.")
+                        .await;
+                }
+            } else {
+                // Switch mode
+                let mode_value = parts[1].to_string();
+                if let Some(config_options) = &session.config_options {
+                    if let Some(mode_option) = config_options.iter().find(|opt| {
+                        matches!(
+                            opt.category,
+                            Some(agent_client_protocol::SessionConfigOptionCategory::Mode)
+                        )
+                    }) {
+                        let req = agent_client_protocol::SetSessionConfigOptionRequest::new(
+                            session.session_id.clone(),
+                            mode_option.id.clone(),
+                            mode_value.clone(),
+                        );
+                        match agent_manager
+                            .set_config_option(&session.agent_name, req)
+                            .await
+                        {
+                            Ok(_) => {
+                                let _ = slack
+                                    .send_message(
+                                        channel,
+                                        thread_ts,
+                                        &format!("Mode switched to: `{}`", mode_value),
+                                    )
+                                    .await;
+                            }
+                            Err(e) => {
+                                let _ = slack
+                                    .send_message(
+                                        channel,
+                                        thread_ts,
+                                        &format!("Failed to switch mode: {}", e),
+                                    )
+                                    .await;
+                            }
+                        }
+                    } else {
+                        let _ = slack
+                            .send_message(channel, thread_ts, "No mode configuration available.")
+                            .await;
+                    }
+                } else {
+                    let _ = slack
+                        .send_message(channel, thread_ts, "No configuration options available.")
+                        .await;
+                }
+            }
+        }
+        "#model" => {
+            debug!("Processing #model command in thread_ts={:?}", thread_ts);
+            if thread_ts.is_none() {
+                let _ = slack
+                    .send_message(
+                        channel,
+                        None,
+                        "This command can only be used in an agent thread.",
+                    )
+                    .await;
+                return;
+            }
+
+            let thread_key = thread_ts.unwrap();
+            let session = session_manager.get_session(thread_key).await;
+            if session.is_none() {
+                let _ = slack
+                    .send_message(channel, thread_ts, "No active session in this thread.")
+                    .await;
+                return;
+            }
+
+            let session = session.unwrap();
+            if parts.len() < 2 {
+                // Show available models
+                if let Some(config_options) = &session.config_options {
+                    if let Some(model_option) = config_options.iter().find(|opt| {
+                        matches!(
+                            opt.category,
+                            Some(agent_client_protocol::SessionConfigOptionCategory::Model)
+                        )
+                    }) {
+                        if let agent_client_protocol::SessionConfigKind::Select(select) =
+                            &model_option.kind
+                        {
+                            let current = &select.current_value;
+                            let options = match &select.options {
+                                agent_client_protocol::SessionConfigSelectOptions::Ungrouped(
+                                    opts,
+                                ) => opts
+                                    .iter()
+                                    .map(|opt| {
+                                        let marker =
+                                            if opt.value == *current { "→" } else { " " };
+                                        format!(
+                                            "{} `{}` - {}",
+                                            marker,
+                                            opt.value,
+                                            opt.description.as_deref().unwrap_or(&opt.name)
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
+                                agent_client_protocol::SessionConfigSelectOptions::Grouped(
+                                    groups,
+                                ) => groups
+                                    .iter()
+                                    .map(|group| {
+                                        let opts = group
+                                            .options
+                                            .iter()
+                                            .map(|opt| {
+                                                let marker =
+                                                    if opt.value == *current { "→" } else { " " };
+                                                format!(
+                                                    "{} `{}` - {}",
+                                                    marker,
+                                                    opt.value,
+                                                    opt.description.as_deref().unwrap_or(&opt.name)
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n");
+                                        format!("*{}*\n{}", group.name, opts)
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n\n"),
+                                _ => String::from("Unknown option format"),
+                            };
+                            let msg = format!("Available models:\n{}", options);
+                            let _ = slack.send_message(channel, thread_ts, &msg).await;
+                        } else {
+                            let _ = slack
+                                .send_message(channel, thread_ts, "Model option is not a selector.")
+                                .await;
+                        }
+                    } else {
+                        let _ = slack
+                            .send_message(channel, thread_ts, "No model configuration available.")
+                            .await;
+                    }
+                } else {
+                    let _ = slack
+                        .send_message(channel, thread_ts, "No configuration options available.")
+                        .await;
+                }
+            } else {
+                // Switch model
+                let model_value = parts[1].to_string();
+                if let Some(config_options) = &session.config_options {
+                    if let Some(model_option) = config_options.iter().find(|opt| {
+                        matches!(
+                            opt.category,
+                            Some(agent_client_protocol::SessionConfigOptionCategory::Model)
+                        )
+                    }) {
+                        let req = agent_client_protocol::SetSessionConfigOptionRequest::new(
+                            session.session_id.clone(),
+                            model_option.id.clone(),
+                            model_value.clone(),
+                        );
+                        match agent_manager
+                            .set_config_option(&session.agent_name, req)
+                            .await
+                        {
+                            Ok(_) => {
+                                let _ = slack
+                                    .send_message(
+                                        channel,
+                                        thread_ts,
+                                        &format!("Model switched to: `{}`", model_value),
+                                    )
+                                    .await;
+                            }
+                            Err(e) => {
+                                let _ = slack
+                                    .send_message(
+                                        channel,
+                                        thread_ts,
+                                        &format!("Failed to switch model: {}", e),
+                                    )
+                                    .await;
+                            }
+                        }
+                    } else {
+                        let _ = slack
+                            .send_message(channel, thread_ts, "No model configuration available.")
+                            .await;
+                    }
+                } else {
+                    let _ = slack
+                        .send_message(channel, thread_ts, "No configuration options available.")
                         .await;
                 }
             }

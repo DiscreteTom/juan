@@ -105,6 +105,15 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 .push_str(&text.text);
                         }
                     }
+                    agent_client_protocol::SessionUpdate::ConfigOptionUpdate(update) => {
+                        // Update stored config options
+                        if let Err(e) = session_manager_clone
+                            .update_config_options(&thread_key, update.config_options)
+                            .await
+                        {
+                            debug!("Failed to update config options: {}", e);
+                        }
+                    }
                     agent_client_protocol::SessionUpdate::AgentThoughtChunk(chunk) => {
                         if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
                             let _ = slack_clone

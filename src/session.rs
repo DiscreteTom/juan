@@ -41,6 +41,8 @@ pub struct SessionState {
     pub busy: bool,
     /// Timestamp of the user's #new message
     pub initial_ts: String,
+    /// Session configuration options (modes, models, etc.)
+    pub config_options: Option<Vec<SessionConfigOption>>,
 }
 
 impl SessionManager {
@@ -92,6 +94,7 @@ impl SessionManager {
             channel,
             busy: false,
             initial_ts: thread_key.clone(),
+            config_options: None,
         };
 
         self.sessions
@@ -140,6 +143,21 @@ impl SessionManager {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     }
+
+    /// Updates the config_options for a session.
+    pub async fn update_config_options(
+        &self,
+        thread_key: &str,
+        config_options: Vec<SessionConfigOption>,
+    ) -> Result<()> {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(thread_key) {
+            session.config_options = Some(config_options);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Session not found: {}", thread_key))
+        }
+    }
 }
 
 impl Clone for SessionState {
@@ -152,6 +170,7 @@ impl Clone for SessionState {
             channel: self.channel.clone(),
             busy: self.busy,
             initial_ts: self.initial_ts.clone(),
+            config_options: self.config_options.clone(),
         }
     }
 }
