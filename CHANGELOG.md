@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Command `#sessions` to show all active sessions info
 - White check mark emoji reaction on `#new` message when session ends
 - Bot token scope `reactions:write` required for emoji reactions
+- Command `#mode` to show available modes and current mode
+- Command `#mode <value>` to switch session mode
+- Command `#model` to show available models and current model
+- Command `#model <value>` to switch session model
+- Support for ACP Session Config Options protocol
 
 ## [0.1.0] - 2026-02-21
 
