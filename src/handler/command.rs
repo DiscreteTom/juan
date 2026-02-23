@@ -469,7 +469,7 @@ pub async fn handle_command(
             if parts.len() < 2 {
                 // Show available modes
                 // Try config_options first (new API)
-                if let Some(config_options) = &session.config_options {
+                let mode_option_found = if let Some(config_options) = &session.config_options {
                     if let Some(mode_option) = config_options.iter().find(|opt| {
                         matches!(
                             opt.category,
@@ -525,9 +525,19 @@ pub async fn handle_command(
                             };
                             let msg = format!("Available modes:\n{}", options);
                             let _ = slack.send_message(channel, thread_ts, &msg).await;
-                            return;
+                            true
+                        } else {
+                            false
                         }
+                    } else {
+                        false
                     }
+                } else {
+                    false
+                };
+
+                if mode_option_found {
+                    return;
                 }
 
                 // Fallback to deprecated modes API
@@ -559,7 +569,7 @@ pub async fn handle_command(
                 let mode_value = parts[1].to_string();
 
                 // Try config_options first (new API)
-                if let Some(config_options) = &session.config_options {
+                let mode_switched = if let Some(config_options) = &session.config_options {
                     if let Some(mode_option) = config_options.iter().find(|opt| {
                         matches!(
                             opt.category,
@@ -583,13 +593,22 @@ pub async fn handle_command(
                                         &format!("Mode switched to: `{}`", mode_value),
                                     )
                                     .await;
-                                return;
+                                true
                             }
                             Err(e) => {
                                 debug!("Failed to set mode via config_options: {}", e);
+                                false
                             }
                         }
+                    } else {
+                        false
                     }
+                } else {
+                    false
+                };
+
+                if mode_switched {
+                    return;
                 }
 
                 // Fallback to deprecated modes API
