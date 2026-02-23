@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Markdown normalization: converts standard markdown to Slack mrkdwn format (`**bold**` → `*bold*`, `*italic*` → `_italic_`)
+- Use Block Kit markdown blocks instead of plain text with mrkdwn formatting
+- Removed markdown-to-mrkdwn conversion (standard markdown now works natively)
 
 ## [0.2.0] - 2026-02-23
 

@@ -33,138 +33,6 @@ fn decode_slack_text(text: &str) -> String {
         .replace("&amp;", "&")
 }
 
-fn convert_markdown_emphasis_segment(segment: &str) -> String {
-    fn starts_with_at(text: &str, i: usize, pat: &str) -> bool {
-        text.get(i..)
-            .map(|rest| rest.starts_with(pat))
-            .unwrap_or(false)
-    }
-
-    let mut out = String::with_capacity(segment.len());
-    let mut i = 0;
-
-    while i < segment.len() {
-        if starts_with_at(segment, i, "**") {
-            let rest = match segment.get(i + 2..) {
-                Some(r) => r,
-                None => "",
-            };
-            if let Some(end_rel) = rest.find("**") {
-                let inner = &rest[..end_rel];
-                if !inner.trim().is_empty() {
-                    out.push('*');
-                    out.push_str(inner);
-                    out.push('*');
-                    i += 2 + end_rel + 2;
-                    continue;
-                }
-            }
-        }
-
-        if starts_with_at(segment, i, "__") {
-            let rest = match segment.get(i + 2..) {
-                Some(r) => r,
-                None => "",
-            };
-            if let Some(end_rel) = rest.find("__") {
-                let inner = &rest[..end_rel];
-                if !inner.trim().is_empty() {
-                    out.push('*');
-                    out.push_str(inner);
-                    out.push('*');
-                    i += 2 + end_rel + 2;
-                    continue;
-                }
-            }
-        }
-
-        if starts_with_at(segment, i, "*") {
-            let rest = match segment.get(i + 1..) {
-                Some(r) => r,
-                None => "",
-            };
-            if let Some(first) = rest.chars().next() {
-                if !first.is_whitespace() {
-                    if let Some(end_rel) = rest.find('*') {
-                        let inner = &rest[..end_rel];
-                        if !inner.trim().is_empty() && !inner.ends_with(' ') {
-                            out.push('_');
-                            out.push_str(inner);
-                            out.push('_');
-                            i += 1 + end_rel + 1;
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Some(ch) = segment.get(i..).and_then(|rest| rest.chars().next()) {
-            out.push(ch);
-            i += ch.len_utf8();
-        } else {
-            break;
-        }
-    }
-
-    out
-}
-
-fn normalize_inline_markdown_for_slack(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut buf = String::new();
-    let mut in_inline_code = false;
-
-    for ch in line.chars() {
-        if ch == '`' {
-            if in_inline_code {
-                out.push_str(&buf);
-                buf.clear();
-                out.push('`');
-                in_inline_code = false;
-            } else {
-                out.push_str(&convert_markdown_emphasis_segment(&buf));
-                buf.clear();
-                out.push('`');
-                in_inline_code = true;
-            }
-        } else {
-            buf.push(ch);
-        }
-    }
-
-    if in_inline_code {
-        out.push_str(&buf);
-    } else {
-        out.push_str(&convert_markdown_emphasis_segment(&buf));
-    }
-
-    out
-}
-
-fn normalize_markdown_for_slack(text: &str) -> String {
-    let mut out_lines = Vec::new();
-    let mut in_fenced_code = false;
-
-    for line in text.replace('\r', "").lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            in_fenced_code = !in_fenced_code;
-            out_lines.push(line.to_string());
-            continue;
-        }
-
-        if in_fenced_code {
-            out_lines.push(line.to_string());
-            continue;
-        }
-
-        out_lines.push(normalize_inline_markdown_for_slack(line));
-    }
-
-    out_lines.join("\n")
-}
-
 /// Simplified Slack event types used internally by the application.
 /// Converts from slack_morphism's complex event types to our domain model.
 #[derive(Debug, Clone)]
@@ -246,7 +114,6 @@ impl SlackConnection {
         thread_ts: Option<&str>,
         text: &str,
     ) -> Result<String> {
-        let text = normalize_markdown_for_slack(text);
         debug!(
             "Sending message to channel={}, thread_ts={:?}, text_len={}",
             channel,
@@ -254,52 +121,35 @@ impl SlackConnection {
             text.len()
         );
         trace!("Message text: {}", text);
-        let session = self.client.open_session(&self.bot_token);
 
-        let encoded_text = encode_slack_text(&text);
-        let mut req = SlackApiChatPostMessageRequest::new(
-            channel.into(),
-            SlackMessageContent::new().with_text(encoded_text.into()),
-        );
+        let encoded_text = encode_slack_text(text);
+        let blocks = vec![json!({
+            "type": "markdown",
+            "text": encoded_text
+        })];
 
-        // If thread_ts is provided, send as a reply in that thread
-        if let Some(ts) = thread_ts {
-            req = req.with_thread_ts(ts.into());
-        }
-
-        let resp = session
-            .chat_post_message(&req)
+        self.send_message_with_blocks(channel, thread_ts, &encoded_text, blocks)
             .await
-            .context("Failed to send Slack message")?;
-
-        Ok(resp.ts.to_string())
     }
 
     /// Updates an existing message with new text.
     /// Requires the channel and timestamp (ts) of the message to update.
     pub async fn update_message(&self, channel: &str, ts: &str, text: &str) -> Result<()> {
-        let text = normalize_markdown_for_slack(text);
         debug!(
             "Updating message: channel={}, ts={}, text_len={}",
             channel,
             ts,
             text.len()
         );
-        let session = self.client.open_session(&self.bot_token);
 
-        let encoded_text = encode_slack_text(&text);
-        let req = SlackApiChatUpdateRequest::new(
-            channel.into(),
-            SlackMessageContent::new().with_text(encoded_text.into()),
-            ts.into(),
-        );
+        let encoded_text = encode_slack_text(text);
+        let blocks = vec![json!({
+            "type": "markdown",
+            "text": encoded_text
+        })];
 
-        session
-            .chat_update(&req)
+        self.update_message_with_blocks(channel, ts, &encoded_text, blocks)
             .await
-            .context("Failed to update Slack message")?;
-
-        Ok(())
     }
 
     /// Adds a reaction emoji to a message.
@@ -385,7 +235,6 @@ impl SlackConnection {
         text: &str,
         blocks: Vec<Value>,
     ) -> Result<String> {
-        let text = normalize_markdown_for_slack(text);
         let mut body = json!({
             "channel": channel,
             "text": text,
@@ -416,7 +265,6 @@ impl SlackConnection {
         text: &str,
         blocks: Vec<Value>,
     ) -> Result<()> {
-        let text = normalize_markdown_for_slack(text);
         let body = json!({
             "channel": channel,
             "ts": ts,
