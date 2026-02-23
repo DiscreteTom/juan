@@ -19,8 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Command `#model <value>` to switch session model via config options
 - Support for ACP Session Config Options protocol (new standard API)
 - Support for deprecated `session/set_mode` API for backward compatibility with agents using older ACP versions
-- Agent config option `default_mode` to automatically set mode when creating new sessions
+- Agent config option `default_mode` to automatically set mode when creating new sessions (supports `!` suffix for force setting)
 - Agent config option `default_model` to automatically set model when creating new sessions
+- Session welcome message now shows configured default mode and model values
+- Error reactions: `#new` command now adds `:x:` emoji reaction to user's message when session creation fails
 
 ### Changed
 

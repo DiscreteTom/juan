@@ -65,6 +65,7 @@ pub async fn handle_command(
             let agent_config = match agent_config {
                 Some(cfg) => cfg,
                 None => {
+                    let _ = slack.add_reaction(channel, ts, "x").await;
                     let _ = slack
                         .send_message(
                             channel,
@@ -86,6 +87,7 @@ pub async fn handle_command(
             {
                 debug!("Agent {} not running, spawning...", agent_name);
                 if let Err(e) = agent_manager.spawn_agents(vec![agent_config.clone()]).await {
+                    let _ = slack.add_reaction(channel, ts, "x").await;
                     let _ = slack
                         .send_message(channel, Some(ts), &format!("Failed to spawn agent: {}", e))
                         .await;
@@ -102,6 +104,7 @@ pub async fn handle_command(
 
             // Validate workspace exists
             if !std::path::Path::new(&workspace_path).is_dir() {
+                let _ = slack.add_reaction(channel, ts, "x").await;
                 let _ = slack
                     .send_message(
                         channel,
@@ -137,6 +140,7 @@ pub async fn handle_command(
                     resp.session_id
                 }
                 Err(e) => {
+                    let _ = slack.add_reaction(channel, ts, "x").await;
                     let _ = slack
                         .send_message(
                             channel,
@@ -256,6 +260,7 @@ pub async fn handle_command(
                     let _ = slack.send_message(channel, Some(ts), &msg).await;
                 }
                 Err(e) => {
+                    let _ = slack.add_reaction(channel, ts, "x").await;
                     let _ = slack
                         .send_message(
                             channel,
