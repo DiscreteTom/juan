@@ -11,19 +11,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, trace};
 
-/// Encode special characters for Slack messages.
-/// Only encodes &, <, and > as per Slack's documentation.
-/// https://docs.slack.dev/messaging/formatting-message-text/
-fn encode_slack_text(text: &str) -> String {
-    trace!("Before encode: {}", text);
-    let encoded = text
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
-    trace!("After encode: {}", encoded);
-    encoded
-}
-
 /// Decode special characters from Slack messages.
 /// Only decodes &amp;, &lt;, and &gt; as per Slack's documentation.
 /// Also removes angle brackets around URLs that Slack adds.
