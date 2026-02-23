@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Use Block Kit markdown blocks instead of plain text with mrkdwn formatting
 - Removed markdown-to-mrkdwn conversion (standard markdown now works natively)
+- Plan/think content now uses plain text instead of rich text formatting
 
 ### Fixed
 
