@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Slack plan block rendering for ACP plan updates
+- Fallback plan block updates derived from thoughts and tool-call lifecycle updates
+- Raw Slack Web API message post/update paths to support unsupported block types
+
+### Changed
+
 - Markdown normalization: converts standard markdown to Slack mrkdwn format (`**bold**` → `*bold*`, `*italic*` → `_italic_`)
 
 ## [0.2.0] - 2026-02-23
