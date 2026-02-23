@@ -26,11 +26,32 @@ fn encode_slack_text(text: &str) -> String {
 
 /// Decode special characters from Slack messages.
 /// Only decodes &amp;, &lt;, and &gt; as per Slack's documentation.
+/// Also removes angle brackets around URLs that Slack adds.
 /// https://docs.slack.dev/messaging/formatting-message-text/
 fn decode_slack_text(text: &str) -> String {
-    text.replace("&lt;", "<")
+    let mut result = text
+        .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&amp;", "&")
+        .replace("&vert;", "|");
+
+    // Remove angle brackets around URLs (Slack wraps URLs in <http://...> or <http://...|label>)
+    loop {
+        if let Some(start) = result.find("<http") {
+            if let Some(end) = result[start..].find('>') {
+                let url_part = result[start + 1..start + end].to_string();
+                // Remove label if present (e.g., "http://example.com|label" -> "http://example.com")
+                let url = url_part.split('|').next().unwrap_or(&url_part).to_string();
+                result.replace_range(start..start + end + 1, &url);
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    result
 }
 
 /// Simplified Slack event types used internally by the application.
