@@ -52,6 +52,7 @@ cargo install --git https://github.com/DiscreteTom/juan
      - `groups:history` - View messages in private channels
      - `im:history` - View messages in direct messages
      - `files:write` - Upload files and share them
+     - `reactions:write` - Add emoji reactions to messages
    - Install the app to your workspace
    - Copy the Bot User OAuth Token (starts with `xoxb-`)
 4. Enable Events:

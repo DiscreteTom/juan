@@ -227,8 +227,15 @@ pub async fn handle_command(
             }
 
             let thread_key = thread_ts.unwrap();
+            let session = session_manager.get_session(thread_key).await;
             match session_manager.end_session(thread_key).await {
                 Ok(_) => {
+                    // Add reaction to user's #new message to mark as ended
+                    if let Some(session) = session {
+                        let _ = slack
+                            .add_reaction(&session.channel, &session.initial_ts, "white_check_mark")
+                            .await;
+                    }
                     let _ = slack
                         .send_message(channel, thread_ts, "Session ended.")
                         .await;

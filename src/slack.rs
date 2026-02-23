@@ -141,6 +141,24 @@ impl SlackConnection {
         Ok(())
     }
 
+    /// Adds a reaction emoji to a message.
+    pub async fn add_reaction(&self, channel: &str, ts: &str, emoji: &str) -> Result<()> {
+        debug!(
+            "Adding reaction: channel={}, ts={}, emoji={}",
+            channel, ts, emoji
+        );
+        let session = self.client.open_session(&self.bot_token);
+
+        let req = SlackApiReactionsAddRequest::new(channel.into(), emoji.into(), ts.into());
+
+        session
+            .reactions_add(&req)
+            .await
+            .context("Failed to add reaction")?;
+
+        Ok(())
+    }
+
     /// Uploads a file/snippet to Slack with syntax highlighting.
     /// The filetype determines the syntax highlighting (e.g., "diff", "yaml", "python").
     pub async fn upload_file(

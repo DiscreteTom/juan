@@ -39,6 +39,8 @@ pub struct SessionState {
     pub channel: String,
     /// Whether the session is currently processing a prompt
     pub busy: bool,
+    /// Timestamp of the user's #new message
+    pub initial_ts: String,
 }
 
 impl SessionManager {
@@ -89,6 +91,7 @@ impl SessionManager {
             auto_approve,
             channel,
             busy: false,
+            initial_ts: thread_key.clone(),
         };
 
         self.sessions
@@ -148,6 +151,7 @@ impl Clone for SessionState {
             auto_approve: self.auto_approve,
             channel: self.channel.clone(),
             busy: self.busy,
+            initial_ts: self.initial_ts.clone(),
         }
     }
 }
