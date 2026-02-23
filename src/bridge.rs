@@ -1,7 +1,7 @@
 use agent_client_protocol::SessionId;
 use anyhow::Result;
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{debug, info, trace, warn};
@@ -30,26 +30,6 @@ pub type PendingPermissions = Arc<
 
 pub type PlanBuffers = Arc<RwLock<HashMap<SessionId, Vec<agent_client_protocol::PlanEntry>>>>;
 pub type PlanMessages = Arc<RwLock<HashMap<SessionId, (String, String)>>>;
-pub type RealPlanSessions = Arc<RwLock<HashSet<SessionId>>>;
-pub type ThoughtPlanBuffers = Arc<RwLock<HashMap<SessionId, Vec<DerivedPlanTask>>>>;
-pub type ThoughtPlanCompleted = Arc<RwLock<HashSet<SessionId>>>;
-pub type ThinkingBuffers = Arc<RwLock<HashMap<SessionId, String>>>;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum DerivedPlanTaskKind {
-    Thought,
-    Tool,
-}
-
-#[derive(Clone, Debug)]
-pub struct DerivedPlanTask {
-    task_id: String,
-    title: String,
-    status: String,
-    details: Option<String>,
-    output: Option<String>,
-    kind: DerivedPlanTaskKind,
-}
 
 pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     info!("Slack bot configured");
@@ -92,10 +72,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
     let plan_buffers: PlanBuffers = Arc::new(RwLock::new(HashMap::new()));
     let plan_messages: PlanMessages = Arc::new(RwLock::new(HashMap::new()));
-    let real_plan_sessions: RealPlanSessions = Arc::new(RwLock::new(HashSet::new()));
-    let thought_plan_buffers: ThoughtPlanBuffers = Arc::new(RwLock::new(HashMap::new()));
-    let thought_plan_completed: ThoughtPlanCompleted = Arc::new(RwLock::new(HashSet::new()));
-    let thinking_buffers: ThinkingBuffers = Arc::new(RwLock::new(HashMap::new()));
 
     // Spawn task to handle agent notifications and forward to Slack
     let slack_clone = slack.clone();
@@ -104,10 +80,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     let tool_messages_clone = tool_call_messages.clone();
     let plan_buffers_clone = plan_buffers.clone();
     let plan_messages_clone = plan_messages.clone();
-    let real_plan_sessions_clone = real_plan_sessions.clone();
-    let thought_plan_buffers_clone = thought_plan_buffers.clone();
-    let thought_plan_completed_clone = thought_plan_completed.clone();
-    let thinking_buffers_clone = thinking_buffers.clone();
     tokio::spawn(async move {
         debug!("Agent notification handler started");
 
@@ -140,55 +112,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 .entry(notification.session_id.clone())
                                 .or_insert_with(String::new)
                                 .push_str(&text.text);
-
-                            let has_native_plan = real_plan_sessions_clone
-                                .read()
-                                .await
-                                .contains(&notification.session_id);
-                            if !has_native_plan {
-                                let should_finalize = {
-                                    let completed = thought_plan_completed_clone.read().await;
-                                    !completed.contains(&notification.session_id)
-                                };
-
-                                if should_finalize {
-                                    let tasks = {
-                                        let mut buffers = thought_plan_buffers_clone.write().await;
-                                        if let Some(entries) =
-                                            buffers.get_mut(&notification.session_id)
-                                        {
-                                            finalize_in_progress_thought_tasks(entries);
-                                        }
-                                        buffers
-                                            .get(&notification.session_id)
-                                            .cloned()
-                                            .unwrap_or_default()
-                                    };
-
-                                    if !tasks.is_empty() {
-                                        if let Err(e) = upsert_thought_plan_message(
-                                            &slack_clone,
-                                            &plan_messages_clone,
-                                            &notification.session_id,
-                                            &session.channel,
-                                            &thread_key,
-                                            &tasks,
-                                            true,
-                                        )
-                                        .await
-                                        {
-                                            tracing::error!(
-                                                "Failed to post derived completed plan block: {}",
-                                                e
-                                            );
-                                        }
-                                        thought_plan_completed_clone
-                                            .write()
-                                            .await
-                                            .insert(notification.session_id.clone());
-                                    }
-                                }
-                            }
                         }
                     }
                     agent_client_protocol::SessionUpdate::ConfigOptionUpdate(update) => {
@@ -214,19 +137,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                         }
                     }
                     agent_client_protocol::SessionUpdate::Plan(plan) => {
-                        real_plan_sessions_clone
-                            .write()
-                            .await
-                            .insert(notification.session_id.clone());
-                        thought_plan_buffers_clone
-                            .write()
-                            .await
-                            .remove(&notification.session_id);
-                        thought_plan_completed_clone
-                            .write()
-                            .await
-                            .remove(&notification.session_id);
-
                         let entries = {
                             let mut plans = plan_buffers_clone.write().await;
                             let session_plan =
@@ -252,21 +162,13 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                     }
                     agent_client_protocol::SessionUpdate::AgentThoughtChunk(chunk) => {
                         if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
-                            trace!("Thought chunk (len={})", text.text.len());
-
-                            let has_native_plan = real_plan_sessions_clone
-                                .read()
+                            // Append thought to message buffer
+                            buffers_clone
+                                .write()
                                 .await
-                                .contains(&notification.session_id);
-                            if !has_native_plan {
-                                // Accumulate thinking text
-                                thinking_buffers_clone
-                                    .write()
-                                    .await
-                                    .entry(notification.session_id.clone())
-                                    .or_insert_with(String::new)
-                                    .push_str(&text.text);
-                            }
+                                .entry(notification.session_id.clone())
+                                .or_insert_with(String::new)
+                                .push_str(&text.text);
                         }
                     }
                     agent_client_protocol::SessionUpdate::ToolCall(tool_call) => {
@@ -281,70 +183,10 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             }
                         }
 
-                        let has_native_plan = real_plan_sessions_clone
-                            .read()
-                            .await
-                            .contains(&notification.session_id);
-                        if !has_native_plan {
-                            // Flush accumulated thinking text and create task
-                            if let Some(thinking_text) = thinking_buffers_clone
-                                .write()
-                                .await
-                                .remove(&notification.session_id)
-                            {
-                                if !thinking_text.trim().is_empty() {
-                                    let mut buffers = thought_plan_buffers_clone.write().await;
-                                    let entries = buffers
-                                        .entry(notification.session_id.clone())
-                                        .or_insert_with(Vec::new);
-                                    upsert_thought_task(entries, thinking_text, None);
-                                }
-                            }
-                        }
-
                         trace!(
                             "ToolCall: id={}, title={}, kind={:?}",
                             tool_call.tool_call_id, tool_call.title, tool_call.kind
                         );
-
-                        let has_native_plan = real_plan_sessions_clone
-                            .read()
-                            .await
-                            .contains(&notification.session_id);
-                        if !has_native_plan {
-                            let tasks = {
-                                let mut buffers = thought_plan_buffers_clone.write().await;
-                                let entries = buffers
-                                    .entry(notification.session_id.clone())
-                                    .or_insert_with(Vec::new);
-                                upsert_tool_task_from_tool_call(entries, &tool_call);
-                                entries.clone()
-                            };
-
-                            if !tasks.is_empty() {
-                                thought_plan_completed_clone
-                                    .write()
-                                    .await
-                                    .remove(&notification.session_id);
-                                if let Err(e) = upsert_thought_plan_message(
-                                    &slack_clone,
-                                    &plan_messages_clone,
-                                    &notification.session_id,
-                                    &session.channel,
-                                    &thread_key,
-                                    &tasks,
-                                    false,
-                                )
-                                .await
-                                {
-                                    tracing::error!(
-                                        "Failed to post derived tool call plan block: {}",
-                                        e
-                                    );
-                                }
-                            }
-                            continue;
-                        }
 
                         // Check if there's a diff in content
                         let has_diff = tool_call.content.iter().any(|item| {
@@ -475,41 +317,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             update.tool_call_id, update.fields.status, update.fields.content
                         );
 
-                        let has_native_plan = real_plan_sessions_clone
-                            .read()
-                            .await
-                            .contains(&notification.session_id);
-                        if !has_native_plan {
-                            let tasks = {
-                                let mut buffers = thought_plan_buffers_clone.write().await;
-                                let entries = buffers
-                                    .entry(notification.session_id.clone())
-                                    .or_insert_with(Vec::new);
-                                apply_tool_call_update_to_tasks(entries, &update);
-                                entries.clone()
-                            };
-
-                            if !tasks.is_empty() {
-                                if let Err(e) = upsert_thought_plan_message(
-                                    &slack_clone,
-                                    &plan_messages_clone,
-                                    &notification.session_id,
-                                    &session.channel,
-                                    &thread_key,
-                                    &tasks,
-                                    false,
-                                )
-                                .await
-                                {
-                                    tracing::error!(
-                                        "Failed to post derived tool call update plan block: {}",
-                                        e
-                                    );
-                                }
-                            }
-                            continue;
-                        }
-
                         if let Some(status) = update.fields.status {
                             let is_terminal = matches!(
                                 status,
@@ -630,9 +437,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
             pending_permissions.clone(),
             plan_buffers.clone(),
             plan_messages.clone(),
-            real_plan_sessions.clone(),
-            thought_plan_buffers.clone(),
-            thought_plan_completed.clone(),
         )
         .await;
     }
@@ -647,17 +451,6 @@ fn generate_unified_diff(old_text: &str, new_text: &str) -> String {
         .iter_all_changes()
         .map(|change| format!("{}{}", change.tag(), change.value()))
         .collect()
-}
-
-fn truncate_text(text: &str, max_chars: usize) -> String {
-    let mut out = String::new();
-    for ch in text.chars().take(max_chars) {
-        out.push(ch);
-    }
-    if text.chars().count() > max_chars {
-        out.push('…');
-    }
-    out
 }
 
 fn build_plan_block_payload(entries: &[agent_client_protocol::PlanEntry]) -> Value {
@@ -764,250 +557,6 @@ async fn upsert_plan_message(
             Err(e) => {
                 warn!(
                     "Failed to send plan block message, falling back to text message: {}",
-                    e
-                );
-                slack
-                    .send_message(channel, Some(thread_key), &fallback_text)
-                    .await?
-            }
-        };
-        plan_messages
-            .write()
-            .await
-            .insert(session_id.clone(), (channel.to_string(), ts));
-    }
-
-    Ok(())
-}
-
-fn finalize_in_progress_thought_tasks(tasks: &mut [DerivedPlanTask]) {
-    for task in tasks.iter_mut() {
-        if task.kind == DerivedPlanTaskKind::Thought && task.status == "in_progress" {
-            task.status = "complete".to_string();
-        }
-    }
-}
-
-fn upsert_thought_task(tasks: &mut Vec<DerivedPlanTask>, title: String, details: Option<String>) {
-    if let Some(last) = tasks.last_mut() {
-        if last.kind == DerivedPlanTaskKind::Thought
-            && last.status == "in_progress"
-            && last.title == title
-        {
-            if details.is_some() {
-                last.details = details;
-            }
-            return;
-        }
-    }
-
-    finalize_in_progress_thought_tasks(tasks);
-
-    let thought_index = tasks
-        .iter()
-        .filter(|task| task.kind == DerivedPlanTaskKind::Thought)
-        .count()
-        + 1;
-    tasks.push(DerivedPlanTask {
-        task_id: format!("thought_{thought_index:03}"),
-        title,
-        status: "in_progress".to_string(),
-        details,
-        output: None,
-        kind: DerivedPlanTaskKind::Thought,
-    });
-}
-
-fn derive_tool_task_title(tool_call: &agent_client_protocol::ToolCall) -> String {
-    let raw_id = tool_call.tool_call_id.to_string();
-    let base = raw_id.split('-').next().unwrap_or_default();
-    if !base.is_empty() {
-        let label = base.replace('_', " ");
-        return format!("Tool: {}", truncate_text(label.trim(), 90));
-    }
-    format!("Tool: {}", truncate_text(tool_call.title.trim(), 90))
-}
-
-fn map_tool_call_status_to_plan_status(status: agent_client_protocol::ToolCallStatus) -> String {
-    match status {
-        agent_client_protocol::ToolCallStatus::Pending => "pending".to_string(),
-        agent_client_protocol::ToolCallStatus::InProgress => "in_progress".to_string(),
-        agent_client_protocol::ToolCallStatus::Completed => "complete".to_string(),
-        agent_client_protocol::ToolCallStatus::Failed => "error".to_string(),
-        _ => "in_progress".to_string(),
-    }
-}
-
-fn extract_tool_call_content_summary(
-    content: &[agent_client_protocol::ToolCallContent],
-) -> Option<String> {
-    let mut lines = Vec::new();
-    for item in content {
-        match item {
-            agent_client_protocol::ToolCallContent::Content(c) => {
-                if let agent_client_protocol::ContentBlock::Text(t) = &c.content {
-                    if !t.text.trim().is_empty() {
-                        lines.push(truncate_text(t.text.trim(), 240));
-                    }
-                }
-            }
-            agent_client_protocol::ToolCallContent::Diff(diff) => {
-                lines.push(format!("Updated {}", diff.path.display()));
-            }
-            agent_client_protocol::ToolCallContent::Terminal(t) => {
-                lines.push(format!("Terminal {}", t.terminal_id));
-            }
-            _ => {}
-        }
-    }
-
-    if lines.is_empty() {
-        None
-    } else {
-        Some(truncate_text(&lines.join("\n"), 900))
-    }
-}
-
-fn upsert_tool_task_from_tool_call(
-    tasks: &mut Vec<DerivedPlanTask>,
-    tool_call: &agent_client_protocol::ToolCall,
-) {
-    let task_id = format!("tool_{}", tool_call.tool_call_id);
-    let status = map_tool_call_status_to_plan_status(tool_call.status);
-    let details = Some(truncate_text(tool_call.title.trim(), 900));
-    let output = extract_tool_call_content_summary(&tool_call.content);
-
-    if let Some(task) = tasks.iter_mut().find(|task| task.task_id == task_id) {
-        task.title = derive_tool_task_title(tool_call);
-        task.status = status;
-        task.details = details;
-        if output.is_some() {
-            task.output = output;
-        }
-        return;
-    }
-
-    tasks.push(DerivedPlanTask {
-        task_id,
-        title: derive_tool_task_title(tool_call),
-        status,
-        details,
-        output,
-        kind: DerivedPlanTaskKind::Tool,
-    });
-}
-
-fn apply_tool_call_update_to_tasks(
-    tasks: &mut Vec<DerivedPlanTask>,
-    update: &agent_client_protocol::ToolCallUpdate,
-) {
-    let task_id = format!("tool_{}", update.tool_call_id);
-    if let Some(task) = tasks.iter_mut().find(|task| task.task_id == task_id) {
-        if let Some(status) = update.fields.status {
-            task.status = map_tool_call_status_to_plan_status(status);
-        }
-        if let Some(title) = &update.fields.title {
-            task.details = Some(truncate_text(title.trim(), 900));
-        }
-        if let Some(content) = &update.fields.content {
-            if let Some(summary) = extract_tool_call_content_summary(content) {
-                task.output = Some(summary);
-            }
-        }
-    }
-}
-
-fn build_thought_plan_block_payload(tasks: &[DerivedPlanTask], completed: bool) -> Value {
-    let title = if completed {
-        "Thinking completed"
-    } else {
-        "Thinking"
-    };
-
-    let task_values = tasks
-        .iter()
-        .map(|task| {
-            json!({
-                "task_id": task.task_id,
-                "title": task.title,
-                "status": task.status,
-                "details": task.details,
-                "output": task.output
-            })
-        })
-        .collect::<Vec<_>>();
-
-    json!({
-        "type": "plan",
-        "title": title,
-        "tasks": task_values
-    })
-}
-
-fn format_thought_plan_message(tasks: &[DerivedPlanTask], completed: bool) -> String {
-    let mut lines = Vec::with_capacity(tasks.len() + 1);
-    if completed {
-        lines.push("*Plan (derived-complete)*".to_string());
-    } else {
-        lines.push("*Plan (derived)*".to_string());
-    }
-
-    for task in tasks {
-        let marker = match task.status.as_str() {
-            "complete" => "[x]",
-            "in_progress" => "[>]",
-            "error" => "[!]",
-            _ => "[ ]",
-        };
-        lines.push(format!("{} {}", marker, task.title));
-        if let Some(details) = &task.details {
-            lines.push(format!("   {}", truncate_text(details, 140)));
-        }
-    }
-
-    lines.join("\n")
-}
-
-async fn upsert_thought_plan_message(
-    slack: &Arc<slack::SlackConnection>,
-    plan_messages: &PlanMessages,
-    session_id: &SessionId,
-    channel: &str,
-    thread_key: &str,
-    tasks: &[DerivedPlanTask],
-    completed: bool,
-) -> Result<()> {
-    let fallback_text = format_thought_plan_message(tasks, completed);
-    let plan_block = build_thought_plan_block_payload(tasks, completed);
-    let existing = plan_messages.read().await.get(session_id).cloned();
-
-    if let Some((msg_channel, msg_ts)) = existing {
-        if let Err(e) = slack
-            .update_message_with_blocks(
-                &msg_channel,
-                &msg_ts,
-                &fallback_text,
-                vec![plan_block.clone()],
-            )
-            .await
-        {
-            warn!(
-                "Failed to update derived plan block message, falling back to text update: {}",
-                e
-            );
-            slack
-                .update_message(&msg_channel, &msg_ts, &fallback_text)
-                .await?;
-        }
-    } else {
-        let ts = match slack
-            .send_message_with_blocks(channel, Some(thread_key), &fallback_text, vec![plan_block])
-            .await
-        {
-            Ok(ts) => ts,
-            Err(e) => {
-                warn!(
-                    "Failed to send derived plan block message, falling back to text message: {}",
                     e
                 );
                 slack
