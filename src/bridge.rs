@@ -121,7 +121,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                         .send_message(
                                             &session.channel,
                                             Some(&thread_key),
-                                            &thought_buffer,
+                                            &format_thought_message(&thought_buffer),
                                         )
                                         .await;
                                 }
@@ -181,7 +181,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     .send_message(
                                         &session.channel,
                                         Some(&thread_key),
-                                        &thought_buffer,
+                                        &format_thought_message(&thought_buffer),
                                     )
                                     .await;
                             }
@@ -259,7 +259,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     .send_message(
                                         &session.channel,
                                         Some(&thread_key),
-                                        &thought_buffer,
+                                        &format_thought_message(&thought_buffer),
                                     )
                                     .await;
                             }
@@ -534,6 +534,13 @@ fn generate_unified_diff(old_text: &str, new_text: &str) -> String {
         .iter_all_changes()
         .map(|change| format!("{}{}", change.tag(), change.value()))
         .collect()
+}
+
+fn format_thought_message(text: &str) -> String {
+    text.lines()
+        .map(|line| format!("> {}", line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn build_plan_block_payload(entries: &[agent_client_protocol::PlanEntry]) -> Value {

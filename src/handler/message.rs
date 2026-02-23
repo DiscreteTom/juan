@@ -120,8 +120,13 @@ pub async fn handle_message(
                             "Flushing {} chars from thought buffer",
                             thought_buffer.len()
                         );
+                        let formatted = thought_buffer
+                            .lines()
+                            .map(|line| format!("> {}", line))
+                            .collect::<Vec<_>>()
+                            .join("\n");
                         let _ = slack_clone
-                            .send_message(&channel, thread_ts.as_deref(), &thought_buffer)
+                            .send_message(&channel, thread_ts.as_deref(), &formatted)
                             .await;
                     }
                 }
