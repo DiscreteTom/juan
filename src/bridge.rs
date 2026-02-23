@@ -33,6 +33,7 @@ pub type PlanMessages = Arc<RwLock<HashMap<SessionId, (String, String)>>>;
 pub type RealPlanSessions = Arc<RwLock<HashSet<SessionId>>>;
 pub type ThoughtPlanBuffers = Arc<RwLock<HashMap<SessionId, Vec<DerivedPlanTask>>>>;
 pub type ThoughtPlanCompleted = Arc<RwLock<HashSet<SessionId>>>;
+pub type ThinkingBuffers = Arc<RwLock<HashMap<SessionId, String>>>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DerivedPlanTaskKind {
@@ -94,6 +95,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     let real_plan_sessions: RealPlanSessions = Arc::new(RwLock::new(HashSet::new()));
     let thought_plan_buffers: ThoughtPlanBuffers = Arc::new(RwLock::new(HashMap::new()));
     let thought_plan_completed: ThoughtPlanCompleted = Arc::new(RwLock::new(HashSet::new()));
+    let thinking_buffers: ThinkingBuffers = Arc::new(RwLock::new(HashMap::new()));
 
     // Spawn task to handle agent notifications and forward to Slack
     let slack_clone = slack.clone();
@@ -105,6 +107,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     let real_plan_sessions_clone = real_plan_sessions.clone();
     let thought_plan_buffers_clone = thought_plan_buffers.clone();
     let thought_plan_completed_clone = thought_plan_completed.clone();
+    let thinking_buffers_clone = thinking_buffers.clone();
     tokio::spawn(async move {
         debug!("Agent notification handler started");
 
@@ -256,39 +259,13 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 .await
                                 .contains(&notification.session_id);
                             if !has_native_plan {
-                                if let Some((title, details)) = extract_thought_task(&text.text) {
-                                    let tasks = {
-                                        let mut buffers = thought_plan_buffers_clone.write().await;
-                                        let entries = buffers
-                                            .entry(notification.session_id.clone())
-                                            .or_insert_with(Vec::new);
-                                        upsert_thought_task(entries, title, details);
-                                        entries.clone()
-                                    };
-
-                                    if !tasks.is_empty() {
-                                        thought_plan_completed_clone
-                                            .write()
-                                            .await
-                                            .remove(&notification.session_id);
-                                        if let Err(e) = upsert_thought_plan_message(
-                                            &slack_clone,
-                                            &plan_messages_clone,
-                                            &notification.session_id,
-                                            &session.channel,
-                                            &thread_key,
-                                            &tasks,
-                                            false,
-                                        )
-                                        .await
-                                        {
-                                            tracing::error!(
-                                                "Failed to post derived in-progress plan block: {}",
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
+                                // Accumulate thinking text
+                                thinking_buffers_clone
+                                    .write()
+                                    .await
+                                    .entry(notification.session_id.clone())
+                                    .or_insert_with(String::new)
+                                    .push_str(&text.text);
                             }
                         }
                     }
@@ -303,6 +280,28 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     .await;
                             }
                         }
+
+                        let has_native_plan = real_plan_sessions_clone
+                            .read()
+                            .await
+                            .contains(&notification.session_id);
+                        if !has_native_plan {
+                            // Flush accumulated thinking text and create task
+                            if let Some(thinking_text) = thinking_buffers_clone
+                                .write()
+                                .await
+                                .remove(&notification.session_id)
+                            {
+                                if !thinking_text.trim().is_empty() {
+                                    let mut buffers = thought_plan_buffers_clone.write().await;
+                                    let entries = buffers
+                                        .entry(notification.session_id.clone())
+                                        .or_insert_with(Vec::new);
+                                    upsert_thought_task(entries, thinking_text, None);
+                                }
+                            }
+                        }
+
                         trace!(
                             "ToolCall: id={}, title={}, kind={:?}",
                             tool_call.tool_call_id, tool_call.title, tool_call.kind
@@ -779,48 +778,6 @@ async fn upsert_plan_message(
     }
 
     Ok(())
-}
-
-fn extract_thought_task(text: &str) -> Option<(String, Option<String>)> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    if let Some(start) = trimmed.find("**") {
-        let rest = &trimmed[start + 2..];
-        if let Some(end) = rest.find("**") {
-            let title = rest[..end].trim();
-            if !title.is_empty() {
-                let detail_text = rest[end + 2..].trim();
-                let details = if detail_text.is_empty() {
-                    None
-                } else {
-                    Some(truncate_text(detail_text, 900))
-                };
-                return Some((truncate_text(title, 120), details));
-            }
-        }
-    }
-
-    let mut non_empty = trimmed
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty());
-    let first = non_empty.next()?;
-    let title = first
-        .trim_start_matches('#')
-        .trim()
-        .trim_matches('*')
-        .trim();
-    let remainder = non_empty.collect::<Vec<_>>().join("\n");
-    let details = if remainder.trim().is_empty() {
-        None
-    } else {
-        Some(truncate_text(remainder.trim(), 900))
-    };
-
-    Some((truncate_text(title, 120), details))
 }
 
 fn finalize_in_progress_thought_tasks(tasks: &mut [DerivedPlanTask]) {
