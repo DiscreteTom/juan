@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Slack plan block rendering for ACP plan updates
 - Fallback plan block updates derived from thoughts and tool-call lifecycle updates
 - Raw Slack Web API message post/update paths to support unsupported block types
+- Debounce logic for Slack API calls (minimum 800ms interval between messages)
 
 ### Changed
 

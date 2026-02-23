@@ -54,6 +54,17 @@ fn decode_slack_text(text: &str) -> String {
     result
 }
 
+enum ApiRequest {
+    PostMessage {
+        body: Value,
+        resp_tx: tokio::sync::oneshot::Sender<Result<Value>>,
+    },
+    UpdateMessage {
+        body: Value,
+        resp_tx: tokio::sync::oneshot::Sender<Result<Value>>,
+    },
+}
+
 /// Simplified Slack event types used internally by the application.
 /// Converts from slack_morphism's complex event types to our domain model.
 #[derive(Debug, Clone)]
@@ -79,7 +90,7 @@ pub enum SlackEvent {
 pub struct SlackConnection {
     client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
     bot_token: SlackApiToken,
-    bot_token_raw: String,
+    api_tx: mpsc::UnboundedSender<ApiRequest>,
 }
 
 impl SlackConnection {
@@ -87,11 +98,47 @@ impl SlackConnection {
     /// Does not establish connection yet - call connect() to start listening.
     pub fn new(bot_token: String) -> Self {
         let client = Arc::new(SlackClient::new(SlackClientHyperConnector::new().unwrap()));
+        let (api_tx, api_rx) = mpsc::unbounded_channel();
+
+        let bot_token_clone = bot_token.clone();
+        tokio::spawn(async move {
+            Self::api_debounce_worker(api_rx, bot_token_clone).await;
+        });
 
         Self {
             client,
-            bot_token: SlackApiToken::new(bot_token.clone().into()),
-            bot_token_raw: bot_token,
+            bot_token: SlackApiToken::new(bot_token.into()),
+            api_tx,
+        }
+    }
+
+    async fn api_debounce_worker(
+        mut api_rx: mpsc::UnboundedReceiver<ApiRequest>,
+        bot_token: String,
+    ) {
+        let mut last_request_time = tokio::time::Instant::now();
+        const MIN_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_millis(800);
+
+        while let Some(req) = api_rx.recv().await {
+            let elapsed = last_request_time.elapsed();
+            if elapsed < MIN_INTERVAL {
+                tokio::time::sleep(MIN_INTERVAL - elapsed).await;
+            }
+
+            last_request_time = tokio::time::Instant::now();
+
+            match req {
+                ApiRequest::PostMessage { body, resp_tx } => {
+                    let result =
+                        Self::invoke_slack_api_static("chat.postMessage", &body, &bot_token).await;
+                    let _ = resp_tx.send(result);
+                }
+                ApiRequest::UpdateMessage { body, resp_tx } => {
+                    let result =
+                        Self::invoke_slack_api_static("chat.update", &body, &bot_token).await;
+                    let _ = resp_tx.send(result);
+                }
+            }
         }
     }
 
@@ -271,7 +318,14 @@ impl SlackConnection {
                 );
         }
 
-        let resp = self.invoke_slack_api("chat.postMessage", &body).await?;
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+        self.api_tx
+            .send(ApiRequest::PostMessage { body, resp_tx })
+            .context("Failed to send API request to debounce worker")?;
+
+        let resp = resp_rx
+            .await
+            .context("Debounce worker dropped response")??;
         let ts = resp
             .get("ts")
             .and_then(Value::as_str)
@@ -293,17 +347,24 @@ impl SlackConnection {
             "blocks": blocks
         });
 
-        self.invoke_slack_api("chat.update", &body).await?;
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+        self.api_tx
+            .send(ApiRequest::UpdateMessage { body, resp_tx })
+            .context("Failed to send API request to debounce worker")?;
+
+        resp_rx
+            .await
+            .context("Debounce worker dropped response")??;
         Ok(())
     }
 
-    async fn invoke_slack_api(&self, method: &str, body: &Value) -> Result<Value> {
+    async fn invoke_slack_api_static(method: &str, body: &Value, bot_token: &str) -> Result<Value> {
         let uri = format!("https://slack.com/api/{method}");
         let client = reqwest::Client::new();
 
         let resp = client
             .post(uri)
-            .bearer_auth(&self.bot_token_raw)
+            .bearer_auth(bot_token)
             .header(
                 reqwest::header::CONTENT_TYPE,
                 "application/json; charset=utf-8",
