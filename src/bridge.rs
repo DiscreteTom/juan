@@ -202,35 +202,56 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
                         // Upload diff files
                         for item in &tool_call.content {
-                            if let agent_client_protocol::ToolCallContent::Diff(diff) = item {
-                                let diff_text = if let Some(old_text) = &diff.old_text {
-                                    generate_unified_diff(old_text, &diff.new_text)
-                                } else {
-                                    diff.new_text
-                                        .lines()
-                                        .map(|line| format!("+{}", line))
-                                        .collect::<Vec<_>>()
-                                        .join("\n")
-                                };
-                                let filename = format!(
-                                    "{}.diff",
-                                    diff.path
-                                        .file_name()
-                                        .and_then(|n| n.to_str())
-                                        .unwrap_or("file")
-                                );
-                                if let Err(e) = slack_clone
-                                    .upload_file(
-                                        &session.channel,
-                                        Some(&msg_ts),
-                                        &diff_text,
-                                        &filename,
-                                        Some("Diff"),
-                                    )
-                                    .await
-                                {
-                                    tracing::error!("Failed to upload diff file: {}", e);
+                            match item {
+                                agent_client_protocol::ToolCallContent::Diff(diff) => {
+                                    let diff_text = if let Some(old_text) = &diff.old_text {
+                                        generate_unified_diff(old_text, &diff.new_text)
+                                    } else {
+                                        diff.new_text
+                                            .lines()
+                                            .map(|line| format!("+{}", line))
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    };
+                                    let filename = format!(
+                                        "{}.diff",
+                                        diff.path
+                                            .file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("file")
+                                    );
+                                    if let Err(e) = slack_clone
+                                        .upload_file(
+                                            &session.channel,
+                                            Some(&msg_ts),
+                                            &diff_text,
+                                            &filename,
+                                            Some("Diff"),
+                                        )
+                                        .await
+                                    {
+                                        tracing::error!("Failed to upload diff file: {}", e);
+                                    }
                                 }
+                                agent_client_protocol::ToolCallContent::Content(content) => {
+                                    if let agent_client_protocol::ContentBlock::Text(text) =
+                                        &content.content
+                                    {
+                                        if let Err(e) = slack_clone
+                                            .upload_file(
+                                                &session.channel,
+                                                Some(&msg_ts),
+                                                &text.text,
+                                                "context.txt",
+                                                Some("Context"),
+                                            )
+                                            .await
+                                        {
+                                            tracing::error!("Failed to upload context file: {}", e);
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }

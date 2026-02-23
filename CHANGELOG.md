@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `#diff` command now accepts any git diff CLI parameters (e.g., `#diff --cached`, `#diff HEAD~1`)
 - `#read` and `!<command>` now work outside agent threads using default workspace from config
+- Text content from tool calls is now uploaded as plain text files for easier viewing
 
 ### Changed
 
