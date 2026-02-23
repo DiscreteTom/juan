@@ -122,18 +122,20 @@ pub async fn handle_command(
                 .create_session(
                     ts.to_string(),
                     agent_name.to_string(),
-                    workspace,
+                    workspace.clone(),
                     channel.to_string(),
                     session_id,
                 )
                 .await
             {
                 Ok(_) => {
+                    let workspace_path =
+                        workspace.unwrap_or_else(|| config.bridge.default_workspace.clone());
                     let _ = slack
                         .send_message(
                             channel,
                             Some(ts),
-                            &format!("Session started with agent: {}. Send messages in this thread to chat.\n\n{}", agent_name, HELP_MESSAGE),
+                            &format!("Session started with agent: `{}`.\nWorking directory: `{}`\nSend messages in this thread to interact with it.\n\n{}", agent_name, workspace_path, HELP_MESSAGE),
                         )
                         .await;
                 }
