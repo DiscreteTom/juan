@@ -52,6 +52,9 @@ pub struct AgentConfig {
     /// Override global auto-approve for this agent
     #[serde(default)]
     pub auto_approve: bool,
+    /// Default mode to set when creating a new session
+    #[serde(default)]
+    pub default_mode: Option<String>,
 }
 
 impl Config {
@@ -100,6 +103,7 @@ impl Config {
                     args: vec!["acp".into()],
                     env: HashMap::new(),
                     auto_approve: false,
+                    default_mode: None,
                 },
                 AgentConfig {
                     name: "opencode".into(),
@@ -108,6 +112,7 @@ impl Config {
                     args: vec!["acp".into()],
                     env: HashMap::new(),
                     auto_approve: false,
+                    default_mode: None,
                 },
             ],
         };

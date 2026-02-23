@@ -159,11 +159,45 @@ pub async fn handle_command(
                     agent_name.to_string(),
                     workspace.clone(),
                     channel.to_string(),
-                    session_id,
+                    session_id.clone(),
                 )
                 .await
             {
                 Ok(_) => {
+                    // Set default mode if configured
+                    if let Some(default_mode) = &agent_config.default_mode {
+                        debug!("Setting default mode: {}", default_mode);
+                        if let Some(session) = session_manager.get_session(ts).await {
+                            let mode_set = if let Some(config_options) = &session.config_options {
+                                if let Some(mode_option) = config_options.iter().find(|opt| {
+                                    matches!(
+                                        opt.category,
+                                        Some(agent_client_protocol::SessionConfigOptionCategory::Mode)
+                                    )
+                                }) {
+                                    let req = agent_client_protocol::SetSessionConfigOptionRequest::new(
+                                        session_id.clone(),
+                                        mode_option.id.clone(),
+                                        default_mode.clone(),
+                                    );
+                                    agent_manager.set_config_option(agent_name, req).await.is_ok()
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+
+                            if !mode_set && session.modes.is_some() {
+                                let req = agent_client_protocol::SetSessionModeRequest::new(
+                                    session_id.clone(),
+                                    default_mode.clone(),
+                                );
+                                let _ = agent_manager.set_mode(agent_name, req).await;
+                            }
+                        }
+                    }
+
                     let workspace_path =
                         workspace.unwrap_or_else(|| config.bridge.default_workspace.clone());
                     let _ = slack
