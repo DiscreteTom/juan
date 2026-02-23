@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Shell commands now properly decode HTML entities (e.g., `&&` was being received as `&amp;&amp;`)
+
 ## [0.1.1] - 2026-02-23
 
 ### Added

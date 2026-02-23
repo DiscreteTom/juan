@@ -36,11 +36,11 @@ pub async fn handle_shell_command(
     // Execute command via shell
     let mut command = if cfg!(windows) {
         let mut cmd_process = Command::new("cmd");
-        cmd_process.arg("/C").arg(cmd);
+        cmd_process.arg("/C").arg(&cmd);
         cmd_process
     } else {
         let mut sh_process = Command::new("sh");
-        sh_process.arg("-c").arg(cmd);
+        sh_process.arg("-c").arg(&cmd);
         sh_process
     };
 

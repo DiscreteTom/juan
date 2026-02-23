@@ -246,6 +246,7 @@ async fn handle_push_event(
 
             if let Some(content) = msg.content {
                 if let Some(text) = content.text {
+                    let text = html_escape::decode_html_entities(&text).to_string();
                     let user = msg.sender.user.map(|u| u.to_string()).unwrap_or_default();
                     debug!(
                         "Received message from user={}, channel={:?}",
@@ -267,6 +268,7 @@ async fn handle_push_event(
         SlackEventCallbackBody::AppMention(mention) => {
             let user = mention.user.to_string();
             let text = mention.content.text.unwrap_or_default();
+            let text = html_escape::decode_html_entities(&text).to_string();
             debug!(
                 "Received app mention from user={}, channel={}",
                 user, mention.channel
