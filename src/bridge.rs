@@ -372,68 +372,13 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 )
                                 .await;
 
-                                // Upload diff files
-                                for item in &tool_call.content {
-                                    match item {
-                                        agent_client_protocol::ToolCallContent::Diff(diff) => {
-                                            let diff_text = if let Some(old_text) = &diff.old_text {
-                                                generate_unified_diff(old_text, &diff.new_text)
-                                            } else {
-                                                diff.new_text
-                                                    .lines()
-                                                    .map(|line| format!("+{}", line))
-                                                    .collect::<Vec<_>>()
-                                                    .join("\n")
-                                            };
-                                            let filename = format!(
-                                                "{}.diff",
-                                                diff.path
-                                                    .file_name()
-                                                    .and_then(|n| n.to_str())
-                                                    .unwrap_or("file")
-                                            );
-                                            if let Err(e) = slack_clone
-                                                .upload_file(
-                                                    &session.channel,
-                                                    Some(&msg_ts),
-                                                    &diff_text,
-                                                    &filename,
-                                                    Some("Diff"),
-                                                )
-                                                .await
-                                            {
-                                                tracing::error!(
-                                                    "Failed to upload diff file: {}",
-                                                    e
-                                                );
-                                            }
-                                        }
-                                        agent_client_protocol::ToolCallContent::Content(
-                                            content,
-                                        ) => {
-                                            if let agent_client_protocol::ContentBlock::Text(text) =
-                                                &content.content
-                                            {
-                                                if let Err(e) = slack_clone
-                                                    .upload_file(
-                                                        &session.channel,
-                                                        Some(&msg_ts),
-                                                        &text.text,
-                                                        "context.txt",
-                                                        Some("Context"),
-                                                    )
-                                                    .await
-                                                {
-                                                    tracing::error!(
-                                                        "Failed to upload context file: {}",
-                                                        e
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
+                                upload_tool_call_content(
+                                    &slack_clone,
+                                    &session.channel,
+                                    &msg_ts,
+                                    &tool_call.content,
+                                )
+                                .await;
                             }
                             agent_client_protocol::SessionUpdate::ToolCallUpdate(update) => {
                                 trace!(
@@ -455,6 +400,23 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                             channel,
                                             ts,
                                             Some(raw_input),
+                                        )
+                                        .await;
+                                    }
+                                }
+
+                                // Check if content was updated
+                                if let Some(content) = &update.fields.content {
+                                    if let Some((channel, ts, _)) = tool_messages_clone
+                                        .read()
+                                        .await
+                                        .get(&update.tool_call_id.to_string())
+                                    {
+                                        upload_tool_call_content(
+                                            &slack_clone,
+                                            channel,
+                                            ts,
+                                            content,
                                         )
                                         .await;
                                     }
@@ -617,6 +579,65 @@ async fn upload_yaml_input(
             {
                 tracing::error!("Failed to upload YAML file: {}", e);
             }
+        }
+    }
+}
+
+async fn upload_tool_call_content(
+    slack: &slack::SlackConnection,
+    channel: &str,
+    thread_ts: &str,
+    content: &[agent_client_protocol::ToolCallContent],
+) {
+    for item in content {
+        match item {
+            agent_client_protocol::ToolCallContent::Diff(diff) => {
+                let diff_text = if let Some(old_text) = &diff.old_text {
+                    generate_unified_diff(old_text, &diff.new_text)
+                } else {
+                    diff.new_text
+                        .lines()
+                        .map(|line| format!("+{}", line))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                let filename = format!(
+                    "{}.diff",
+                    diff.path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("file")
+                );
+                if let Err(e) = slack
+                    .upload_file(
+                        channel,
+                        Some(thread_ts),
+                        &diff_text,
+                        &filename,
+                        Some("Diff"),
+                    )
+                    .await
+                {
+                    tracing::error!("Failed to upload diff file: {}", e);
+                }
+            }
+            agent_client_protocol::ToolCallContent::Content(content) => {
+                if let agent_client_protocol::ContentBlock::Text(text) = &content.content {
+                    if let Err(e) = slack
+                        .upload_file(
+                            channel,
+                            Some(thread_ts),
+                            &text.text,
+                            "context.txt",
+                            Some("Context"),
+                        )
+                        .await
+                    {
+                        tracing::error!("Failed to upload context file: {}", e);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
