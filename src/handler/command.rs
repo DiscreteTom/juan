@@ -9,6 +9,7 @@ use tracing::debug;
 /// - #new <name> [workspace] - Start a new session
 /// - #agents - List available agents
 /// - #session - Show current session info
+/// - #sessions - Show all active sessions
 /// - #end - End current session
 /// - #read <file_path> - Read local file content
 /// - #diff [file_path] - Show git diff
@@ -183,6 +184,32 @@ pub async fn handle_command(
                 let _ = slack
                     .send_message(channel, thread_ts, "No active session in this thread.")
                     .await;
+            }
+        }
+        "#sessions" => {
+            debug!("Processing #sessions command");
+            let sessions = session_manager.list_sessions().await;
+            if sessions.is_empty() {
+                let _ = slack
+                    .send_message(channel, thread_ts, "No active sessions.")
+                    .await;
+            } else {
+                let session_list: Vec<String> = sessions
+                    .iter()
+                    .map(|(_, session)| {
+                        let status = if session.busy { "busy" } else { "idle" };
+                        format!(
+                            "• Agent: {} | Workspace: {} | Auto-approve: {} | Status: {}",
+                            session.agent_name, session.workspace, session.auto_approve, status
+                        )
+                    })
+                    .collect();
+                let msg = format!(
+                    "Active sessions ({}):\n{}",
+                    sessions.len(),
+                    session_list.join("\n")
+                );
+                let _ = slack.send_message(channel, thread_ts, &msg).await;
             }
         }
         "#end" => {
@@ -413,6 +440,7 @@ const HELP_MESSAGE: &str = "Available commands:
 • #new <name> [workspace] - Start a new agent session in a thread
 • #agents - List available agents
 • #session - Show current agent session info
+• #sessions - Show all active sessions
 • #end - End current agent session
 • #read <file_path> - Read local file content
 • #diff [file_path] - Show git diff
