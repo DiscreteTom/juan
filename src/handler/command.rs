@@ -12,7 +12,7 @@ use tracing::debug;
 /// - #sessions - Show all active sessions
 /// - #end - End current session
 /// - #read <file_path> - Read local file content
-/// - #diff [file_path] - Show git diff
+/// - #diff [args] - Show git diff
 pub async fn handle_command(
     text: &str,
     channel: &str,
@@ -369,12 +369,11 @@ pub async fn handle_command(
             let mut cmd = std::process::Command::new("git");
             cmd.arg("diff").current_dir(&workspace);
 
-            let file_path = if parts.len() >= 2 {
-                cmd.arg(parts[1]);
-                Some(parts[1])
-            } else {
-                None
-            };
+            // Pass all remaining arguments to git diff
+            let args: Vec<&str> = parts.iter().skip(1).copied().collect();
+            if !args.is_empty() {
+                cmd.args(&args);
+            }
 
             match cmd.output() {
                 Ok(output) => {
@@ -383,33 +382,22 @@ pub async fn handle_command(
                         let _ = slack
                             .send_message(channel, thread_ts, "No changes to show.")
                             .await;
-                    } else if let Some(path) = file_path {
-                        // Single file - use file upload
-                        let msg = format!("📝 Diff: {}", path);
+                    } else {
+                        // Generate filename and message based on args
+                        let (msg, filename) = if args.is_empty() {
+                            ("📝 Diff: (whole repo)".to_string(), "repo.diff".to_string())
+                        } else {
+                            let args_str = args.join(" ");
+                            (
+                                format!("📝 Diff: {}", args_str),
+                                format!("{}.diff", args_str.replace(['/', ' '], "_")),
+                            )
+                        };
+
                         match slack.send_message(channel, thread_ts, &msg).await {
                             Ok(ts) => {
-                                let filename = format!("{}.diff", path.replace('/', "_"));
                                 let _ = slack
                                     .upload_file(channel, Some(&ts), &diff, &filename, Some("Diff"))
-                                    .await;
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to send message: {}", e);
-                            }
-                        }
-                    } else {
-                        // Whole repo - use file upload
-                        let msg = "📝 Diff: (whole repo)";
-                        match slack.send_message(channel, thread_ts, msg).await {
-                            Ok(ts) => {
-                                let _ = slack
-                                    .upload_file(
-                                        channel,
-                                        Some(&ts),
-                                        &diff,
-                                        "repo.diff",
-                                        Some("Diff"),
-                                    )
                                     .await;
                             }
                             Err(e) => {
@@ -443,5 +431,5 @@ const HELP_MESSAGE: &str = "Available commands:
 • #sessions - Show all active sessions
 • #end - End current agent session
 • #read <file_path> - Read local file content
-• #diff [file_path] - Show git diff
+• #diff [args] - Show git diff
 • !<command> - Execute shell command";

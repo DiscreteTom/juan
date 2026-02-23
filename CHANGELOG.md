@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `#diff` command now accepts any git diff CLI parameters (e.g., `#diff --cached`, `#diff HEAD~1`)
+
 ### Fixed
+
 - Messages sent to Slack now properly encode special characters (`&`, `<`, `>`) to prevent formatting issues
 - Incoming messages from Slack now use minimal decoding (only `&amp;`, `&lt;`, `&gt;`) as per Slack's documentation
 - Failed agent spawns are no longer marked as running, allowing retry with `#new` command
@@ -16,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2026-02-23
 
 ### Added
+
 - Command `#sessions` to show all active sessions info
 - White check mark emoji reaction on `#new` message when session ends
 - Bot token scope `reactions:write` required for emoji reactions
@@ -23,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-02-21
 
 ### Added
+
 - Slack integration via Socket Mode (no public endpoint required)
 - Multi-agent support with configuration and switching
 - Thread-based session management with persistent context
