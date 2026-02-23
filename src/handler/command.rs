@@ -2,17 +2,18 @@ use crate::{agent, config, session, slack};
 use std::sync::Arc;
 use tracing::debug;
 
+const HELP_MESSAGE: &str = "Available commands:
+• #help - Show this help message
+• #new <agent> [workspace] - Start a new agent session
+• #agents - List available agents
+• #session - Show current agent session info
+• #sessions - Show all active sessions
+• #end - End current agent session
+• #read <file_path> - Read local file content
+• #diff [args] - Show git diff
+• !<command> - Execute shell command";
+
 /// Handles bot commands (messages starting with #).
-///
-/// Supported commands:
-/// - #help - Show available commands
-/// - #new <agent> [workspace] - Start a new session
-/// - #agents - List available agents
-/// - #session - Show current session info
-/// - #sessions - Show all active sessions
-/// - #end - End current session
-/// - #read <file_path> - Read local file content
-/// - #diff [args] - Show git diff
 pub async fn handle_command(
     text: &str,
     channel: &str,
@@ -422,14 +423,3 @@ pub async fn handle_command(
         }
     }
 }
-
-const HELP_MESSAGE: &str = "Available commands:
-• #help - Show this help message
-• #new <agent> [workspace] - Start a new agent session in a thread
-• #agents - List available agents
-• #session - Show current agent session info
-• #sessions - Show all active sessions
-• #end - End current agent session
-• #read <file_path> - Read local file content
-• #diff [args] - Show git diff
-• !<command> - Execute shell command";
