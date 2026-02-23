@@ -103,17 +103,9 @@ impl SlackConnection {
         mut api_rx: mpsc::UnboundedReceiver<ApiRequest>,
         bot_token: String,
     ) {
-        let mut last_request_time = tokio::time::Instant::now();
         const MIN_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_millis(800);
 
         while let Some(req) = api_rx.recv().await {
-            let elapsed = last_request_time.elapsed();
-            if elapsed < MIN_INTERVAL {
-                tokio::time::sleep(MIN_INTERVAL - elapsed).await;
-            }
-
-            last_request_time = tokio::time::Instant::now();
-
             match req {
                 ApiRequest::PostMessage { body, resp_tx } => {
                     let result =
@@ -126,6 +118,8 @@ impl SlackConnection {
                     let _ = resp_tx.send(result);
                 }
             }
+
+            tokio::time::sleep(MIN_INTERVAL).await;
         }
     }
 
