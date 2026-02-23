@@ -41,25 +41,6 @@ fn decode_slack_text(text: &str) -> String {
     result
 }
 
-enum ApiRequest {
-    PostMessage {
-        body: Value,
-        resp_tx: tokio::sync::oneshot::Sender<Result<Value>>,
-    },
-    UpdateMessage {
-        body: Value,
-        resp_tx: tokio::sync::oneshot::Sender<Result<Value>>,
-    },
-    UploadFile {
-        channel: String,
-        thread_ts: Option<String>,
-        content: String,
-        filename: String,
-        title: Option<String>,
-        resp_tx: tokio::sync::oneshot::Sender<Result<()>>,
-    },
-}
-
 /// Simplified Slack event types used internally by the application.
 /// Converts from slack_morphism's complex event types to our domain model.
 #[derive(Debug, Clone)]
@@ -85,7 +66,8 @@ pub enum SlackEvent {
 pub struct SlackConnection {
     client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
     bot_token: SlackApiToken,
-    api_tx: mpsc::UnboundedSender<ApiRequest>,
+    bot_token_str: String,
+    api_tx: mpsc::UnboundedSender<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl SlackConnection {
@@ -95,57 +77,25 @@ impl SlackConnection {
         let client = Arc::new(SlackClient::new(SlackClientHyperConnector::new().unwrap()));
         let (api_tx, api_rx) = mpsc::unbounded_channel();
 
-        let bot_token_clone = bot_token.clone();
         tokio::spawn(async move {
-            Self::api_debounce_worker(api_rx, bot_token_clone).await;
+            Self::api_debounce_worker(api_rx).await;
         });
 
         Self {
             client,
-            bot_token: SlackApiToken::new(bot_token.into()),
+            bot_token: SlackApiToken::new(bot_token.clone().into()),
+            bot_token_str: bot_token,
             api_tx,
         }
     }
 
     async fn api_debounce_worker(
-        mut api_rx: mpsc::UnboundedReceiver<ApiRequest>,
-        bot_token: String,
+        mut api_rx: mpsc::UnboundedReceiver<tokio::sync::oneshot::Sender<()>>,
     ) {
         const MIN_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_millis(800);
 
-        while let Some(req) = api_rx.recv().await {
-            match req {
-                ApiRequest::PostMessage { body, resp_tx } => {
-                    let result =
-                        Self::invoke_slack_api_static("chat.postMessage", &body, &bot_token).await;
-                    let _ = resp_tx.send(result);
-                }
-                ApiRequest::UpdateMessage { body, resp_tx } => {
-                    let result =
-                        Self::invoke_slack_api_static("chat.update", &body, &bot_token).await;
-                    let _ = resp_tx.send(result);
-                }
-                ApiRequest::UploadFile {
-                    channel,
-                    thread_ts,
-                    content,
-                    filename,
-                    title,
-                    resp_tx,
-                } => {
-                    let result = Self::upload_file_static(
-                        &bot_token,
-                        &channel,
-                        thread_ts.as_deref(),
-                        &content,
-                        &filename,
-                        title.as_deref(),
-                    )
-                    .await;
-                    let _ = resp_tx.send(result);
-                }
-            }
-
+        while let Some(resp_tx) = api_rx.recv().await {
+            let _ = resp_tx.send(());
             tokio::time::sleep(MIN_INTERVAL).await;
         }
     }
@@ -256,34 +206,16 @@ impl SlackConnection {
     ) -> Result<()> {
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.api_tx
-            .send(ApiRequest::UploadFile {
-                channel: channel.to_string(),
-                thread_ts: thread_ts.map(|s| s.to_string()),
-                content: content.to_string(),
-                filename: filename.to_string(),
-                title: title.map(|s| s.to_string()),
-                resp_tx,
-            })
+            .send(resp_tx)
             .context("Failed to send upload file request")?;
 
-        resp_rx.await.context("Upload file response channel closed")?
-    }
+        resp_rx.await.context("Debounce worker dropped response")?;
 
-    async fn upload_file_static(
-        bot_token: &str,
-        channel: &str,
-        thread_ts: Option<&str>,
-        content: &str,
-        filename: &str,
-        title: Option<&str>,
-    ) -> Result<()> {
         debug!(
             "Uploading file to channel={}, thread_ts={:?}, filename={}",
             channel, thread_ts, filename
         );
-        let client = SlackClient::new(SlackClientHyperConnector::new().context("Failed to create Slack client")?);
-        let token = SlackApiToken::new(bot_token.into());
-        let session = client.open_session(&token);
+        let session = self.client.open_session(&self.bot_token);
 
         // Step 1: Get upload URL
         let get_url_req =
@@ -352,12 +284,13 @@ impl SlackConnection {
 
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.api_tx
-            .send(ApiRequest::PostMessage { body, resp_tx })
+            .send(resp_tx)
             .context("Failed to send API request to debounce worker")?;
 
-        let resp = resp_rx
-            .await
-            .context("Debounce worker dropped response")??;
+        resp_rx.await.context("Debounce worker dropped response")?;
+
+        let resp =
+            Self::invoke_slack_api_static("chat.postMessage", &body, &self.bot_token_str).await?;
         let ts = resp
             .get("ts")
             .and_then(Value::as_str)
@@ -381,12 +314,12 @@ impl SlackConnection {
 
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.api_tx
-            .send(ApiRequest::UpdateMessage { body, resp_tx })
+            .send(resp_tx)
             .context("Failed to send API request to debounce worker")?;
 
-        resp_rx
-            .await
-            .context("Debounce worker dropped response")??;
+        resp_rx.await.context("Debounce worker dropped response")?;
+
+        Self::invoke_slack_api_static("chat.update", &body, &self.bot_token_str).await?;
         Ok(())
     }
 
