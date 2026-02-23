@@ -233,13 +233,27 @@ pub async fn handle_command(
 
                     let workspace_path =
                         workspace.unwrap_or_else(|| config.bridge.default_workspace.clone());
-                    let _ = slack
-                        .send_message(
-                            channel,
-                            Some(ts),
-                            &format!("Session started with agent: `{}`\nWorking directory: `{}`\nSend messages in this thread to interact with it.\n\n{}", agent_name, workspace_path, HELP_MESSAGE),
-                        )
-                        .await;
+
+                    let mut msg = format!(
+                        "Session started with agent: `{}`\nWorking directory: `{}`",
+                        agent_name, workspace_path
+                    );
+
+                    if let Some(default_mode) = &agent_config.default_mode {
+                        let mode_value = default_mode.trim_end_matches('!');
+                        msg.push_str(&format!("\nDefault mode: `{}`", mode_value));
+                    }
+
+                    if let Some(default_model) = &agent_config.default_model {
+                        msg.push_str(&format!("\nDefault model: `{}`", default_model));
+                    }
+
+                    msg.push_str(&format!(
+                        "\nSend messages in this thread to interact with it.\n\n{}",
+                        HELP_MESSAGE
+                    ));
+
+                    let _ = slack.send_message(channel, Some(ts), &msg).await;
                 }
                 Err(e) => {
                     let _ = slack
