@@ -56,44 +56,26 @@ pub async fn handle_shell_command(
             let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
             let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
 
-            if out.status.success() {
-                if stdout.is_empty() && stderr.is_empty() {
-                    "Command executed successfully (no output)".to_string()
-                } else if stderr.is_empty() {
-                    let ticks = crate::utils::safe_backticks(&stdout);
-                    format!("{}\n{}\n{}", ticks, stdout, ticks)
-                } else {
-                    let stdout_ticks = crate::utils::safe_backticks(&stdout);
-                    let stderr_ticks = crate::utils::safe_backticks(&stderr);
-                    format!(
-                        "{}\n{}\n{}\n\nStderr:\n{}\n{}\n{}",
-                        stdout_ticks, stdout, stdout_ticks, stderr_ticks, stderr, stderr_ticks
-                    )
-                }
+            let mut parts = Vec::new();
+
+            if !out.status.success() {
+                parts.push(format!("Exit code: {}", out.status.code().unwrap_or(-1)));
+            }
+
+            if !stdout.is_empty() {
+                let ticks = crate::utils::safe_backticks(&stdout);
+                parts.push(format!("{}\n{}\n{}", ticks, stdout, ticks));
+            }
+
+            if !stderr.is_empty() {
+                let ticks = crate::utils::safe_backticks(&stderr);
+                parts.push(format!("Stderr:\n{}\n{}\n{}", ticks, stderr, ticks));
+            }
+
+            if parts.is_empty() {
+                "Command executed successfully (no output)".to_string()
             } else {
-                if stderr.is_empty() {
-                    let ticks = crate::utils::safe_backticks(&stdout);
-                    format!(
-                        "Exit code: {}\n{}\n{}\n{}",
-                        out.status.code().unwrap_or(-1),
-                        ticks,
-                        stdout,
-                        ticks
-                    )
-                } else {
-                    let stdout_ticks = crate::utils::safe_backticks(&stdout);
-                    let stderr_ticks = crate::utils::safe_backticks(&stderr);
-                    format!(
-                        "Exit code: {}\n{}\n{}\n{}\n\nStderr:\n{}\n{}\n{}",
-                        out.status.code().unwrap_or(-1),
-                        stdout_ticks,
-                        stdout,
-                        stdout_ticks,
-                        stderr_ticks,
-                        stderr,
-                        stderr_ticks
-                    )
-                }
+                parts.join("\n\n")
             }
         }
         Err(e) => format!("Failed to execute command: {}", e),
