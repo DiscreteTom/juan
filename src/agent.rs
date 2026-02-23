@@ -165,7 +165,7 @@ impl AgentManager {
 
                 // Initialize the agent with ACP protocol
                 let init_req = InitializeRequest::new(ProtocolVersion::LATEST)
-                    .client_info(Implementation::new("juan", "0.1.1"));
+                    .client_info(Implementation::new("juan", env!("CARGO_PKG_VERSION")));
 
                 match connection.initialize(init_req).await {
                     Ok(_) => {

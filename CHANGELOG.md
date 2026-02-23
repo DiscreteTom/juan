@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-23
+
 ### Added
 
 - `#diff` command now accepts any git diff CLI parameters (e.g., `#diff --cached`, `#diff HEAD~1`)
@@ -56,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commands: `#new`, `#agents`, `#session`, `#end`, `#read`, `#diff`
 - Shell command execution with `!` prefix
 
-[Unreleased]: https://github.com/DiscreteTom/juan/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/DiscreteTom/juan/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/DiscreteTom/juan/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/DiscreteTom/juan/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/DiscreteTom/juan/releases/tag/v0.1.0
