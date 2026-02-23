@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Markdown normalization: converts standard markdown to Slack mrkdwn format (`**bold**` → `*bold*`, `*italic*` → `_italic_`)
+
 ## [0.2.0] - 2026-02-23
 
 ### Added
