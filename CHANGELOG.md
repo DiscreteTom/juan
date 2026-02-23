@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Messages sent to Slack now properly encode special characters (`&`, `<`, `>`) to prevent formatting issues
 - Incoming messages from Slack now use minimal decoding (only `&amp;`, `&lt;`, `&gt;`) as per Slack's documentation
+- Failed agent spawns are no longer marked as running, allowing retry with `#new` command
 
 ## [0.1.1] - 2026-02-23
 

@@ -118,6 +118,7 @@ impl AgentManager {
             .compat();
 
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let (init_tx, init_rx) = tokio::sync::oneshot::channel();
         let agent_name = config.name.clone();
         let agent_name2 = agent_name.clone();
         let notification_tx = self.notification_tx.clone();
@@ -157,9 +158,13 @@ impl AgentManager {
                     .client_info(Implementation::new("juan", "0.1.1"));
 
                 match connection.initialize(init_req).await {
-                    Ok(_) => info!("Agent {} initialized successfully", agent_name),
+                    Ok(_) => {
+                        info!("Agent {} initialized successfully", agent_name);
+                        let _ = init_tx.send(Ok(()));
+                    }
                     Err(e) => {
                         error!("Failed to initialize agent {}: {}", agent_name, e);
+                        let _ = init_tx.send(Err(e));
                         return;
                     }
                 }
@@ -187,8 +192,12 @@ impl AgentManager {
             }));
         });
 
-        let handle = AgentHandle { tx: cmd_tx };
+        // Wait for initialization to complete
+        init_rx
+            .await
+            .context("Agent initialization channel closed")??;
 
+        let handle = AgentHandle { tx: cmd_tx };
         self.agents.write().await.insert(agent_name2, handle);
 
         Ok(())
