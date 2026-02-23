@@ -4,18 +4,18 @@ use tracing::debug;
 
 const HELP_MESSAGE: &str = "Available commands:
 - `#help` - Show this help message
-- `#new <agent> [workspace]` - Start a new agent session
+- `#new &lt;agent&gt; [workspace]` - Start a new agent session
 - `#agents` - List available agents
 - `#session` - Show current agent session info
 - `#sessions` - Show all active sessions
 - `#end` - End current agent session
-- `#read <file_path>` - Read local file content
+- `#read &lt;file_path&gt;` - Read local file content
 - `#diff [args]` - Show git diff
 - `#mode` - Show available modes and current mode
-- `#mode <value>` - Switch to a different mode
+- `#mode &lt;value&gt;` - Switch to a different mode
 - `#model` - Show available models and current model
-- `#model <value>` - Switch to a different model
-- `!<command>` - Execute shell command";
+- `#model &lt;value&gt;` - Switch to a different model
+- `!&lt;command&gt;` - Execute shell command";
 
 /// Handles bot commands (messages starting with #).
 pub async fn handle_command(
