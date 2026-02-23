@@ -601,38 +601,48 @@ pub async fn handle_command(
             } else {
                 // Switch mode
                 let mode_value = parts[1].to_string();
+                let force_mode = mode_value.ends_with('!');
+                let mode_value = if force_mode {
+                    mode_value.trim_end_matches('!').to_string()
+                } else {
+                    mode_value
+                };
 
                 // Try config_options first (new API)
-                let mode_switched = if let Some(config_options) = &session.config_options {
-                    if let Some(mode_option) = config_options.iter().find(|opt| {
-                        matches!(
-                            opt.category,
-                            Some(agent_client_protocol::SessionConfigOptionCategory::Mode)
-                        )
-                    }) {
-                        let req = agent_client_protocol::SetSessionConfigOptionRequest::new(
-                            session.session_id.clone(),
-                            mode_option.id.clone(),
-                            mode_value.clone(),
-                        );
-                        match agent_manager
-                            .set_config_option(&session.agent_name, req)
-                            .await
-                        {
-                            Ok(_) => {
-                                let _ = slack
-                                    .send_message(
-                                        channel,
-                                        thread_ts,
-                                        &format!("Mode switched to: `{}`", mode_value),
-                                    )
-                                    .await;
-                                true
+                let mode_switched = if force_mode || session.config_options.is_some() {
+                    if let Some(config_options) = &session.config_options {
+                        if let Some(mode_option) = config_options.iter().find(|opt| {
+                            matches!(
+                                opt.category,
+                                Some(agent_client_protocol::SessionConfigOptionCategory::Mode)
+                            )
+                        }) {
+                            let req = agent_client_protocol::SetSessionConfigOptionRequest::new(
+                                session.session_id.clone(),
+                                mode_option.id.clone(),
+                                mode_value.clone(),
+                            );
+                            match agent_manager
+                                .set_config_option(&session.agent_name, req)
+                                .await
+                            {
+                                Ok(_) => {
+                                    let _ = slack
+                                        .send_message(
+                                            channel,
+                                            thread_ts,
+                                            &format!("Mode switched to: `{}`", mode_value),
+                                        )
+                                        .await;
+                                    true
+                                }
+                                Err(e) => {
+                                    debug!("Failed to set mode via config_options: {}", e);
+                                    false
+                                }
                             }
-                            Err(e) => {
-                                debug!("Failed to set mode via config_options: {}", e);
-                                false
-                            }
+                        } else {
+                            false
                         }
                     } else {
                         false
@@ -646,7 +656,7 @@ pub async fn handle_command(
                 }
 
                 // Fallback to deprecated modes API
-                if let Some(_modes) = &session.modes {
+                if force_mode || session.modes.is_some() {
                     let req = agent_client_protocol::SetSessionModeRequest::new(
                         session.session_id.clone(),
                         mode_value.clone(),
@@ -673,7 +683,11 @@ pub async fn handle_command(
                     }
                 } else {
                     let _ = slack
-                        .send_message(channel, thread_ts, "No mode configuration available.")
+                        .send_message(
+                            channel,
+                            thread_ts,
+                            "No mode configuration available. Use `#mode <value>!` to force set.",
+                        )
                         .await;
                 }
             }

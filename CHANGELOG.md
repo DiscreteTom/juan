@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Text content from tool calls is now uploaded as plain text files for easier viewing
 - Command `#mode` to show available modes and current mode
 - Command `#mode <value>` to switch session mode via config options or deprecated modes API
+- Command `#mode <value>!` to force set mode even when mode list is not available
 - Command `#model` to show available models and current model
 - Command `#model <value>` to switch session model via config options
 - Support for ACP Session Config Options protocol (new standard API)
