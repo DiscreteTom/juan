@@ -380,17 +380,20 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
                                 // Now upload files to the message
                                 if let Some(yaml_content) = input_yaml {
-                                    if let Err(e) = slack_clone
-                                        .upload_file(
-                                            &session.channel,
-                                            Some(&msg_ts),
-                                            &yaml_content,
-                                            "input.yaml",
-                                            Some("Input"),
-                                        )
-                                        .await
-                                    {
-                                        tracing::error!("Failed to upload YAML file: {}", e);
+                                    let trimmed = yaml_content.trim();
+                                    if !trimmed.is_empty() && trimmed != "{}" {
+                                        if let Err(e) = slack_clone
+                                            .upload_file(
+                                                &session.channel,
+                                                Some(&msg_ts),
+                                                &yaml_content,
+                                                "input.yaml",
+                                                Some("Input"),
+                                            )
+                                            .await
+                                        {
+                                            tracing::error!("Failed to upload YAML file: {}", e);
+                                        }
                                     }
                                 }
 
