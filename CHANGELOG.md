@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `#diff` command now accepts any git diff CLI parameters (e.g., `#diff --cached`, `#diff HEAD~1`)
 - `#read` and `!<command>` now work outside agent threads using default workspace from config
 
+### Changed
+
+- Diff format simplified to show only changed lines with +/- prefix, no headers or context markers
+
 ### Fixed
 
 - Messages sent to Slack now properly encode special characters (`&`, `<`, `>`) to prevent formatting issues

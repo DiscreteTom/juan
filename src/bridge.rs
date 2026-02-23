@@ -204,22 +204,13 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                         for item in &tool_call.content {
                             if let agent_client_protocol::ToolCallContent::Diff(diff) = item {
                                 let diff_text = if let Some(old_text) = &diff.old_text {
-                                    format!(
-                                        "--- {}\n+++ {}\n{}",
-                                        diff.path.display(),
-                                        diff.path.display(),
-                                        generate_unified_diff(old_text, &diff.new_text)
-                                    )
+                                    generate_unified_diff(old_text, &diff.new_text)
                                 } else {
-                                    format!(
-                                        "--- /dev/null\n+++ {}\n{}",
-                                        diff.path.display(),
-                                        diff.new_text
-                                            .lines()
-                                            .map(|line| format!("+{}", line))
-                                            .collect::<Vec<_>>()
-                                            .join("\n")
-                                    )
+                                    diff.new_text
+                                        .lines()
+                                        .map(|line| format!("+{}", line))
+                                        .collect::<Vec<_>>()
+                                        .join("\n")
                                 };
                                 let filename = format!(
                                     "{}.diff",
@@ -377,7 +368,7 @@ fn generate_unified_diff(old_text: &str, new_text: &str) -> String {
     use similar::TextDiff;
 
     TextDiff::from_lines(old_text, new_text)
-        .unified_diff()
-        .context_radius(3)
-        .to_string()
+        .iter_all_changes()
+        .map(|change| format!("{}{}", change.tag(), change.value()))
+        .collect()
 }
