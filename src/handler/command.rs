@@ -167,20 +167,31 @@ pub async fn handle_command(
                     // Set default mode if configured
                     if let Some(default_mode) = &agent_config.default_mode {
                         debug!("Setting default mode: {}", default_mode);
+                        let force_mode = default_mode.ends_with('!');
+                        let mode_value = if force_mode {
+                            default_mode.trim_end_matches('!').to_string()
+                        } else {
+                            default_mode.clone()
+                        };
+
                         if let Some(session) = session_manager.get_session(ts).await {
-                            let mode_set = if let Some(config_options) = &session.config_options {
-                                if let Some(mode_option) = config_options.iter().find(|opt| {
-                                    matches!(
-                                        opt.category,
-                                        Some(agent_client_protocol::SessionConfigOptionCategory::Mode)
-                                    )
-                                }) {
-                                    let req = agent_client_protocol::SetSessionConfigOptionRequest::new(
-                                        session_id.clone(),
-                                        mode_option.id.clone(),
-                                        default_mode.clone(),
-                                    );
-                                    agent_manager.set_config_option(agent_name, req).await.is_ok()
+                            let mode_set = if force_mode || session.config_options.is_some() {
+                                if let Some(config_options) = &session.config_options {
+                                    if let Some(mode_option) = config_options.iter().find(|opt| {
+                                        matches!(
+                                            opt.category,
+                                            Some(agent_client_protocol::SessionConfigOptionCategory::Mode)
+                                        )
+                                    }) {
+                                        let req = agent_client_protocol::SetSessionConfigOptionRequest::new(
+                                            session_id.clone(),
+                                            mode_option.id.clone(),
+                                            mode_value.clone(),
+                                        );
+                                        agent_manager.set_config_option(agent_name, req).await.is_ok()
+                                    } else {
+                                        false
+                                    }
                                 } else {
                                     false
                                 }
@@ -188,10 +199,10 @@ pub async fn handle_command(
                                 false
                             };
 
-                            if !mode_set && session.modes.is_some() {
+                            if !mode_set && (force_mode || session.modes.is_some()) {
                                 let req = agent_client_protocol::SetSessionModeRequest::new(
                                     session_id.clone(),
-                                    default_mode.clone(),
+                                    mode_value,
                                 );
                                 let _ = agent_manager.set_mode(agent_name, req).await;
                             }
