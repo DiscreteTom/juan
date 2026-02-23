@@ -322,21 +322,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     tool_call.tool_call_id, tool_call.title, tool_call.kind
                                 );
 
-                                // Check if there's a diff in content
-                                let has_diff = tool_call.content.iter().any(|item| {
-                                    matches!(item, agent_client_protocol::ToolCallContent::Diff(_))
-                                });
-
-                                // Prepare YAML input if needed
-                                let input_yaml = if !has_diff {
-                                    tool_call
-                                        .raw_input
-                                        .as_ref()
-                                        .and_then(|v| serde_yaml_ng::to_string(v).ok())
-                                } else {
-                                    None
-                                };
-
                                 let msg = format!("🔧 Tool: {}", tool_call.title);
 
                                 let tool_call_id = tool_call.tool_call_id.to_string();
@@ -379,23 +364,13 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 };
 
                                 // Now upload files to the message
-                                if let Some(yaml_content) = input_yaml {
-                                    let trimmed = yaml_content.trim();
-                                    if !trimmed.is_empty() && trimmed != "{}" {
-                                        if let Err(e) = slack_clone
-                                            .upload_file(
-                                                &session.channel,
-                                                Some(&msg_ts),
-                                                &yaml_content,
-                                                "input.yaml",
-                                                Some("Input"),
-                                            )
-                                            .await
-                                        {
-                                            tracing::error!("Failed to upload YAML file: {}", e);
-                                        }
-                                    }
-                                }
+                                upload_yaml_input(
+                                    &slack_clone,
+                                    &session.channel,
+                                    &msg_ts,
+                                    tool_call.raw_input.as_ref(),
+                                )
+                                .await;
 
                                 // Upload diff files
                                 for item in &tool_call.content {
@@ -467,6 +442,18 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     update.fields.status,
                                     update.fields.content
                                 );
+
+                                // Check if raw_input was updated
+                                if let Some(raw_input) = &update.fields.raw_input {
+                                    if let Some((channel, ts, _)) = tool_messages_clone
+                                        .read()
+                                        .await
+                                        .get(&update.tool_call_id.to_string())
+                                    {
+                                        upload_yaml_input(&slack_clone, channel, ts, Some(raw_input))
+                                            .await;
+                                    }
+                                }
 
                                 if let Some(status) = update.fields.status {
                                     let is_terminal = matches!(
@@ -602,6 +589,25 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn upload_yaml_input(
+    slack: &slack::SlackConnection,
+    channel: &str,
+    thread_ts: &str,
+    raw_input: Option<&serde_json::Value>,
+) {
+    if let Some(yaml_content) = raw_input.and_then(|v| serde_yaml_ng::to_string(v).ok()) {
+        let trimmed = yaml_content.trim();
+        if !trimmed.is_empty() && trimmed != "{}" {
+            if let Err(e) = slack
+                .upload_file(channel, Some(thread_ts), &yaml_content, "input.yaml", Some("Input"))
+                .await
+            {
+                tracing::error!("Failed to upload YAML file: {}", e);
+            }
+        }
+    }
 }
 
 fn generate_unified_diff(old_text: &str, new_text: &str) -> String {
