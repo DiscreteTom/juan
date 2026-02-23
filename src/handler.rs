@@ -30,6 +30,7 @@ pub async fn handle_event(
     pending_permissions: PendingPermissions,
     plan_buffers: PlanBuffers,
     plan_messages: PlanMessages,
+    notification_tx: tokio::sync::mpsc::UnboundedSender<crate::bridge::NotificationWrapper>,
 ) {
     tracing::info!("Received event: {:?}", event);
 
@@ -113,6 +114,7 @@ pub async fn handle_event(
                 thought_buffers,
                 plan_buffers,
                 plan_messages,
+                notification_tx,
             )
             .await;
         }

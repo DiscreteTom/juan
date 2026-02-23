@@ -19,10 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use Block Kit markdown blocks instead of plain text with mrkdwn formatting
 - Removed markdown-to-mrkdwn conversion (standard markdown now works natively)
 - Plan/think content now uses plain text instead of rich text formatting
+- Buffer flushing now uses notification channel instead of sleep-based timing
 
 ### Fixed
 
 - Shell commands with URLs now work correctly (decode Slack's angle bracket URL formatting)
+- Message ordering issues by ensuring all buffers flush through the notification queue
 
 ## [0.2.0] - 2026-02-23
 

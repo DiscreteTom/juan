@@ -22,7 +22,7 @@ pub struct AgentManager {
     /// Map of agent name to agent handle
     agents: Arc<RwLock<HashMap<String, AgentHandle>>>,
     /// Channel for receiving notifications from agents
-    notification_tx: mpsc::UnboundedSender<(String, SessionNotification)>,
+    notification_tx: mpsc::UnboundedSender<crate::bridge::NotificationWrapper>,
     /// Map of session_id to auto_approve setting
     session_permissions: Arc<RwLock<HashMap<String, bool>>>,
     /// Channel for receiving permission requests from agents
@@ -70,7 +70,7 @@ enum AgentCommand {
 impl AgentManager {
     /// Creates a new agent manager with the given notification channel.
     pub fn new(
-        notification_tx: mpsc::UnboundedSender<(String, SessionNotification)>,
+        notification_tx: mpsc::UnboundedSender<crate::bridge::NotificationWrapper>,
         permission_request_tx: mpsc::UnboundedSender<PermissionRequest>,
     ) -> Self {
         Self {
@@ -362,7 +362,7 @@ impl AgentManager {
 /// ACP client implementation for handling agent notifications and permission requests.
 struct NotificationClient {
     agent_name: String,
-    notification_tx: mpsc::UnboundedSender<(String, SessionNotification)>,
+    notification_tx: mpsc::UnboundedSender<crate::bridge::NotificationWrapper>,
     session_permissions: Arc<RwLock<HashMap<String, bool>>>,
     permission_request_tx: mpsc::UnboundedSender<PermissionRequest>,
 }
@@ -457,7 +457,10 @@ impl Client for NotificationClient {
             "Agent {} notification: session={}, update={:?}",
             self.agent_name, args.session_id, args.update
         );
-        if let Err(e) = self.notification_tx.send((self.agent_name.clone(), args)) {
+        if let Err(e) = self
+            .notification_tx
+            .send(crate::bridge::NotificationWrapper::Agent(args))
+        {
             error!(
                 "Failed to send notification from agent {}: {}",
                 self.agent_name, e

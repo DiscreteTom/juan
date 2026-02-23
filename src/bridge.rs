@@ -8,6 +8,11 @@ use tracing::{debug, info, trace, warn};
 
 use crate::{agent, config, handler, session, slack};
 
+pub enum NotificationWrapper {
+    Agent(agent_client_protocol::SessionNotification),
+    PromptCompleted { session_id: SessionId },
+}
+
 /// Shared message buffer for accumulating agent message chunks
 pub type MessageBuffers = Arc<RwLock<HashMap<SessionId, String>>>;
 
@@ -51,7 +56,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     let (notification_tx, mut notification_rx) = mpsc::unbounded_channel();
     let (permission_request_tx, mut permission_request_rx) = mpsc::unbounded_channel();
     let agent_manager = Arc::new(agent::AgentManager::new(
-        notification_tx,
+        notification_tx.clone(),
         permission_request_tx,
     ));
     info!("Agent manager initialized (agents will spawn on-demand)");
@@ -88,95 +93,33 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     tokio::spawn(async move {
         debug!("Agent notification handler started");
 
-        while let Some((agent_name, notification)) = notification_rx.recv().await {
-            trace!(
-                "Received notification from agent {}: session={}",
-                agent_name, notification.session_id
-            );
+        while let Some(wrapper) = notification_rx.recv().await {
+            match wrapper {
+                NotificationWrapper::PromptCompleted { session_id } => {
+                    let session_info = session_manager_clone
+                        .list_sessions()
+                        .await
+                        .into_iter()
+                        .find(|(_, session)| session.session_id == session_id);
 
-            // Find the Slack thread for this session
-            let session_info = session_manager_clone
-                .list_sessions()
-                .await
-                .into_iter()
-                .find(|(_, session)| session.session_id == notification.session_id);
-
-            if let Some((thread_key, session)) = session_info {
-                debug!(
-                    "Found thread_key {} for session {}",
-                    thread_key, notification.session_id
-                );
-
-                match notification.update {
-                    agent_client_protocol::SessionUpdate::AgentMessageChunk(chunk) => {
-                        if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
-                            // Flush thought buffer if exists
-                            if let Some(thought_buffer) = thought_buffers_clone
-                                .write()
-                                .await
-                                .remove(&notification.session_id)
-                            {
-                                if !thought_buffer.is_empty() {
-                                    let _ = slack_clone
-                                        .send_message(
-                                            &session.channel,
-                                            Some(&thread_key),
-                                            &format_thought_message(&thought_buffer),
-                                        )
-                                        .await;
-                                }
-                            }
-
-                            // Buffer the message chunk
-                            buffers_clone
-                                .write()
-                                .await
-                                .entry(notification.session_id.clone())
-                                .or_insert_with(String::new)
-                                .push_str(&text.text);
-                        }
-                    }
-                    agent_client_protocol::SessionUpdate::ConfigOptionUpdate(update) => {
-                        // Update stored config options
-                        if let Err(e) = session_manager_clone
-                            .update_config_options(&thread_key, update.config_options)
-                            .await
-                        {
-                            debug!("Failed to update config options: {}", e);
-                        }
-                    }
-                    agent_client_protocol::SessionUpdate::CurrentModeUpdate(update) => {
-                        // Update stored mode (deprecated API)
-                        if let Some(modes) = &session.modes {
-                            let mut updated_modes = modes.clone();
-                            updated_modes.current_mode_id = update.current_mode_id;
-                            if let Err(e) = session_manager_clone
-                                .update_modes(&thread_key, updated_modes)
-                                .await
-                            {
-                                debug!("Failed to update mode: {}", e);
-                            }
-                        }
-                    }
-                    agent_client_protocol::SessionUpdate::Plan(plan) => {
-                        // Flush accumulated message chunks before plan
-                        if let Some(buffer) =
-                            buffers_clone.write().await.remove(&notification.session_id)
-                        {
+                    if let Some((thread_key, session)) = session_info {
+                        if let Some(buffer) = buffers_clone.write().await.remove(&session_id) {
                             if !buffer.is_empty() {
+                                debug!("Flushing {} chars from message buffer", buffer.len());
                                 let _ = slack_clone
                                     .send_message(&session.channel, Some(&thread_key), &buffer)
                                     .await;
                             }
                         }
 
-                        // Flush accumulated thought chunks before plan
-                        if let Some(thought_buffer) = thought_buffers_clone
-                            .write()
-                            .await
-                            .remove(&notification.session_id)
+                        if let Some(thought_buffer) =
+                            thought_buffers_clone.write().await.remove(&session_id)
                         {
                             if !thought_buffer.is_empty() {
+                                debug!(
+                                    "Flushing {} chars from thought buffer",
+                                    thought_buffer.len()
+                                );
                                 let _ = slack_clone
                                     .send_message(
                                         &session.channel,
@@ -186,246 +129,376 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     .await;
                             }
                         }
-
-                        let entries = {
-                            let mut plans = plan_buffers_clone.write().await;
-                            let session_plan =
-                                plans.entry(notification.session_id.clone()).or_default();
-                            *session_plan = plan.entries.clone();
-                            session_plan.clone()
-                        };
-
-                        if !entries.is_empty() {
-                            if let Err(e) = upsert_plan_message(
-                                &slack_clone,
-                                &plan_messages_clone,
-                                &notification.session_id,
-                                &session.channel,
-                                &thread_key,
-                                &entries,
-                            )
-                            .await
-                            {
-                                tracing::error!("Failed to post ACP plan block: {}", e);
-                            }
-                        }
                     }
-                    agent_client_protocol::SessionUpdate::AgentThoughtChunk(chunk) => {
-                        if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
-                            // Flush message buffer if exists
-                            if let Some(message_buffer) =
-                                buffers_clone.write().await.remove(&notification.session_id)
-                            {
-                                if !message_buffer.is_empty() {
-                                    let _ = slack_clone
-                                        .send_message(
-                                            &session.channel,
-                                            Some(&thread_key),
-                                            &message_buffer,
-                                        )
-                                        .await;
-                                }
-                            }
+                }
+                NotificationWrapper::Agent(notification) => {
+                    trace!("Received notification: session={}", notification.session_id);
 
-                            // Buffer the thought chunk
-                            thought_buffers_clone
-                                .write()
-                                .await
-                                .entry(notification.session_id.clone())
-                                .or_insert_with(String::new)
-                                .push_str(&text.text);
-                        }
-                    }
-                    agent_client_protocol::SessionUpdate::ToolCall(tool_call) => {
-                        // Flush accumulated message chunks before tool call
-                        if let Some(buffer) =
-                            buffers_clone.write().await.remove(&notification.session_id)
-                        {
-                            if !buffer.is_empty() {
-                                let _ = slack_clone
-                                    .send_message(&session.channel, Some(&thread_key), &buffer)
-                                    .await;
-                            }
-                        }
+                    // Find the Slack thread for this session
+                    let session_info = session_manager_clone
+                        .list_sessions()
+                        .await
+                        .into_iter()
+                        .find(|(_, session)| session.session_id == notification.session_id);
 
-                        // Flush accumulated thought chunks before tool call
-                        if let Some(thought_buffer) = thought_buffers_clone
-                            .write()
-                            .await
-                            .remove(&notification.session_id)
-                        {
-                            if !thought_buffer.is_empty() {
-                                let _ = slack_clone
-                                    .send_message(
-                                        &session.channel,
-                                        Some(&thread_key),
-                                        &format_thought_message(&thought_buffer),
-                                    )
-                                    .await;
-                            }
-                        }
-
-                        trace!(
-                            "ToolCall: id={}, title={}, kind={:?}",
-                            tool_call.tool_call_id, tool_call.title, tool_call.kind
+                    if let Some((thread_key, session)) = session_info {
+                        debug!(
+                            "Found thread_key {} for session {}",
+                            thread_key, notification.session_id
                         );
 
-                        // Check if there's a diff in content
-                        let has_diff = tool_call.content.iter().any(|item| {
-                            matches!(item, agent_client_protocol::ToolCallContent::Diff(_))
-                        });
+                        match notification.update {
+                            agent_client_protocol::SessionUpdate::AgentMessageChunk(chunk) => {
+                                if let agent_client_protocol::ContentBlock::Text(text) =
+                                    chunk.content
+                                {
+                                    // Flush thought buffer if exists
+                                    if let Some(thought_buffer) = thought_buffers_clone
+                                        .write()
+                                        .await
+                                        .remove(&notification.session_id)
+                                    {
+                                        if !thought_buffer.is_empty() {
+                                            let _ = slack_clone
+                                                .send_message(
+                                                    &session.channel,
+                                                    Some(&thread_key),
+                                                    &format_thought_message(&thought_buffer),
+                                                )
+                                                .await;
+                                        }
+                                    }
 
-                        // Prepare YAML input if needed
-                        let input_yaml = if !has_diff {
-                            tool_call
-                                .raw_input
-                                .as_ref()
-                                .and_then(|v| serde_yaml_ng::to_string(v).ok())
-                        } else {
-                            None
-                        };
+                                    // Buffer the message chunk
+                                    buffers_clone
+                                        .write()
+                                        .await
+                                        .entry(notification.session_id.clone())
+                                        .or_insert_with(String::new)
+                                        .push_str(&text.text);
+                                }
+                            }
+                            agent_client_protocol::SessionUpdate::ConfigOptionUpdate(update) => {
+                                // Update stored config options
+                                if let Err(e) = session_manager_clone
+                                    .update_config_options(&thread_key, update.config_options)
+                                    .await
+                                {
+                                    debug!("Failed to update config options: {}", e);
+                                }
+                            }
+                            agent_client_protocol::SessionUpdate::CurrentModeUpdate(update) => {
+                                // Update stored mode (deprecated API)
+                                if let Some(modes) = &session.modes {
+                                    let mut updated_modes = modes.clone();
+                                    updated_modes.current_mode_id = update.current_mode_id;
+                                    if let Err(e) = session_manager_clone
+                                        .update_modes(&thread_key, updated_modes)
+                                        .await
+                                    {
+                                        debug!("Failed to update mode: {}", e);
+                                    }
+                                }
+                            }
+                            agent_client_protocol::SessionUpdate::Plan(plan) => {
+                                // Flush accumulated message chunks before plan
+                                if let Some(buffer) =
+                                    buffers_clone.write().await.remove(&notification.session_id)
+                                {
+                                    if !buffer.is_empty() {
+                                        let _ = slack_clone
+                                            .send_message(
+                                                &session.channel,
+                                                Some(&thread_key),
+                                                &buffer,
+                                            )
+                                            .await;
+                                    }
+                                }
 
-                        let msg = format!("🔧 Tool: {}", tool_call.title);
+                                // Flush accumulated thought chunks before plan
+                                if let Some(thought_buffer) = thought_buffers_clone
+                                    .write()
+                                    .await
+                                    .remove(&notification.session_id)
+                                {
+                                    if !thought_buffer.is_empty() {
+                                        let _ = slack_clone
+                                            .send_message(
+                                                &session.channel,
+                                                Some(&thread_key),
+                                                &format_thought_message(&thought_buffer),
+                                            )
+                                            .await;
+                                    }
+                                }
 
-                        let tool_call_id = tool_call.tool_call_id.to_string();
-                        let mut tool_messages = tool_messages_clone.write().await;
+                                let entries = {
+                                    let mut plans = plan_buffers_clone.write().await;
+                                    let session_plan =
+                                        plans.entry(notification.session_id.clone()).or_default();
+                                    *session_plan = plan.entries.clone();
+                                    session_plan.clone()
+                                };
 
-                        // Send or update message first to get timestamp
-                        let msg_ts = if let Some((channel, ts, _)) =
-                            tool_messages.get(&tool_call_id).cloned()
-                        {
-                            // Update existing message
-                            let _ = slack_clone.update_message(&channel, &ts, &msg).await;
-                            tool_messages.insert(
-                                tool_call_id.clone(),
-                                (channel, ts.clone(), tool_call.clone()),
-                            );
-                            ts
-                        } else {
-                            // Send new message
-                            drop(tool_messages);
-                            match slack_clone
-                                .send_message(&session.channel, Some(&thread_key), &msg)
-                                .await
-                            {
-                                Ok(ts) => {
-                                    tool_messages_clone.write().await.insert(
+                                if !entries.is_empty() {
+                                    if let Err(e) = upsert_plan_message(
+                                        &slack_clone,
+                                        &plan_messages_clone,
+                                        &notification.session_id,
+                                        &session.channel,
+                                        &thread_key,
+                                        &entries,
+                                    )
+                                    .await
+                                    {
+                                        tracing::error!("Failed to post ACP plan block: {}", e);
+                                    }
+                                }
+                            }
+                            agent_client_protocol::SessionUpdate::AgentThoughtChunk(chunk) => {
+                                if let agent_client_protocol::ContentBlock::Text(text) =
+                                    chunk.content
+                                {
+                                    // Flush message buffer if exists
+                                    if let Some(message_buffer) =
+                                        buffers_clone.write().await.remove(&notification.session_id)
+                                    {
+                                        if !message_buffer.is_empty() {
+                                            let _ = slack_clone
+                                                .send_message(
+                                                    &session.channel,
+                                                    Some(&thread_key),
+                                                    &message_buffer,
+                                                )
+                                                .await;
+                                        }
+                                    }
+
+                                    // Buffer the thought chunk
+                                    thought_buffers_clone
+                                        .write()
+                                        .await
+                                        .entry(notification.session_id.clone())
+                                        .or_insert_with(String::new)
+                                        .push_str(&text.text);
+                                }
+                            }
+                            agent_client_protocol::SessionUpdate::ToolCall(tool_call) => {
+                                // Flush accumulated message chunks before tool call
+                                if let Some(buffer) =
+                                    buffers_clone.write().await.remove(&notification.session_id)
+                                {
+                                    if !buffer.is_empty() {
+                                        let _ = slack_clone
+                                            .send_message(
+                                                &session.channel,
+                                                Some(&thread_key),
+                                                &buffer,
+                                            )
+                                            .await;
+                                    }
+                                }
+
+                                // Flush accumulated thought chunks before tool call
+                                if let Some(thought_buffer) = thought_buffers_clone
+                                    .write()
+                                    .await
+                                    .remove(&notification.session_id)
+                                {
+                                    if !thought_buffer.is_empty() {
+                                        let _ = slack_clone
+                                            .send_message(
+                                                &session.channel,
+                                                Some(&thread_key),
+                                                &format_thought_message(&thought_buffer),
+                                            )
+                                            .await;
+                                    }
+                                }
+
+                                trace!(
+                                    "ToolCall: id={}, title={}, kind={:?}",
+                                    tool_call.tool_call_id, tool_call.title, tool_call.kind
+                                );
+
+                                // Check if there's a diff in content
+                                let has_diff = tool_call.content.iter().any(|item| {
+                                    matches!(item, agent_client_protocol::ToolCallContent::Diff(_))
+                                });
+
+                                // Prepare YAML input if needed
+                                let input_yaml = if !has_diff {
+                                    tool_call
+                                        .raw_input
+                                        .as_ref()
+                                        .and_then(|v| serde_yaml_ng::to_string(v).ok())
+                                } else {
+                                    None
+                                };
+
+                                let msg = format!("🔧 Tool: {}", tool_call.title);
+
+                                let tool_call_id = tool_call.tool_call_id.to_string();
+                                let mut tool_messages = tool_messages_clone.write().await;
+
+                                // Send or update message first to get timestamp
+                                let msg_ts = if let Some((channel, ts, _)) =
+                                    tool_messages.get(&tool_call_id).cloned()
+                                {
+                                    // Update existing message
+                                    let _ = slack_clone.update_message(&channel, &ts, &msg).await;
+                                    tool_messages.insert(
                                         tool_call_id.clone(),
-                                        (session.channel.clone(), ts.clone(), tool_call.clone()),
+                                        (channel, ts.clone(), tool_call.clone()),
                                     );
                                     ts
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to send message: {}", e);
-                                    continue;
-                                }
-                            }
-                        };
+                                } else {
+                                    // Send new message
+                                    drop(tool_messages);
+                                    match slack_clone
+                                        .send_message(&session.channel, Some(&thread_key), &msg)
+                                        .await
+                                    {
+                                        Ok(ts) => {
+                                            tool_messages_clone.write().await.insert(
+                                                tool_call_id.clone(),
+                                                (
+                                                    session.channel.clone(),
+                                                    ts.clone(),
+                                                    tool_call.clone(),
+                                                ),
+                                            );
+                                            ts
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Failed to send message: {}", e);
+                                            continue;
+                                        }
+                                    }
+                                };
 
-                        // Now upload files to the message
-                        if let Some(yaml_content) = input_yaml {
-                            if let Err(e) = slack_clone
-                                .upload_file(
-                                    &session.channel,
-                                    Some(&msg_ts),
-                                    &yaml_content,
-                                    "input.yaml",
-                                    Some("Input"),
-                                )
-                                .await
-                            {
-                                tracing::error!("Failed to upload YAML file: {}", e);
-                            }
-                        }
-
-                        // Upload diff files
-                        for item in &tool_call.content {
-                            match item {
-                                agent_client_protocol::ToolCallContent::Diff(diff) => {
-                                    let diff_text = if let Some(old_text) = &diff.old_text {
-                                        generate_unified_diff(old_text, &diff.new_text)
-                                    } else {
-                                        diff.new_text
-                                            .lines()
-                                            .map(|line| format!("+{}", line))
-                                            .collect::<Vec<_>>()
-                                            .join("\n")
-                                    };
-                                    let filename = format!(
-                                        "{}.diff",
-                                        diff.path
-                                            .file_name()
-                                            .and_then(|n| n.to_str())
-                                            .unwrap_or("file")
-                                    );
+                                // Now upload files to the message
+                                if let Some(yaml_content) = input_yaml {
                                     if let Err(e) = slack_clone
                                         .upload_file(
                                             &session.channel,
                                             Some(&msg_ts),
-                                            &diff_text,
-                                            &filename,
-                                            Some("Diff"),
+                                            &yaml_content,
+                                            "input.yaml",
+                                            Some("Input"),
                                         )
                                         .await
                                     {
-                                        tracing::error!("Failed to upload diff file: {}", e);
+                                        tracing::error!("Failed to upload YAML file: {}", e);
                                     }
                                 }
-                                agent_client_protocol::ToolCallContent::Content(content) => {
-                                    if let agent_client_protocol::ContentBlock::Text(text) =
-                                        &content.content
-                                    {
-                                        if let Err(e) = slack_clone
-                                            .upload_file(
-                                                &session.channel,
-                                                Some(&msg_ts),
-                                                &text.text,
-                                                "context.txt",
-                                                Some("Context"),
-                                            )
-                                            .await
-                                        {
-                                            tracing::error!("Failed to upload context file: {}", e);
+
+                                // Upload diff files
+                                for item in &tool_call.content {
+                                    match item {
+                                        agent_client_protocol::ToolCallContent::Diff(diff) => {
+                                            let diff_text = if let Some(old_text) = &diff.old_text {
+                                                generate_unified_diff(old_text, &diff.new_text)
+                                            } else {
+                                                diff.new_text
+                                                    .lines()
+                                                    .map(|line| format!("+{}", line))
+                                                    .collect::<Vec<_>>()
+                                                    .join("\n")
+                                            };
+                                            let filename = format!(
+                                                "{}.diff",
+                                                diff.path
+                                                    .file_name()
+                                                    .and_then(|n| n.to_str())
+                                                    .unwrap_or("file")
+                                            );
+                                            if let Err(e) = slack_clone
+                                                .upload_file(
+                                                    &session.channel,
+                                                    Some(&msg_ts),
+                                                    &diff_text,
+                                                    &filename,
+                                                    Some("Diff"),
+                                                )
+                                                .await
+                                            {
+                                                tracing::error!(
+                                                    "Failed to upload diff file: {}",
+                                                    e
+                                                );
+                                            }
                                         }
+                                        agent_client_protocol::ToolCallContent::Content(
+                                            content,
+                                        ) => {
+                                            if let agent_client_protocol::ContentBlock::Text(text) =
+                                                &content.content
+                                            {
+                                                if let Err(e) = slack_clone
+                                                    .upload_file(
+                                                        &session.channel,
+                                                        Some(&msg_ts),
+                                                        &text.text,
+                                                        "context.txt",
+                                                        Some("Context"),
+                                                    )
+                                                    .await
+                                                {
+                                                    tracing::error!(
+                                                        "Failed to upload context file: {}",
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        _ => {}
                                     }
                                 }
-                                _ => {}
                             }
-                        }
-                    }
-                    agent_client_protocol::SessionUpdate::ToolCallUpdate(update) => {
-                        trace!(
-                            "ToolCallUpdate: id={}, status={:?}, content={:?}",
-                            update.tool_call_id, update.fields.status, update.fields.content
-                        );
+                            agent_client_protocol::SessionUpdate::ToolCallUpdate(update) => {
+                                trace!(
+                                    "ToolCallUpdate: id={}, status={:?}, content={:?}",
+                                    update.tool_call_id,
+                                    update.fields.status,
+                                    update.fields.content
+                                );
 
-                        if let Some(status) = update.fields.status {
-                            let is_terminal = matches!(
-                                status,
-                                agent_client_protocol::ToolCallStatus::Completed
-                                    | agent_client_protocol::ToolCallStatus::Failed
-                            );
+                                if let Some(status) = update.fields.status {
+                                    let is_terminal = matches!(
+                                        status,
+                                        agent_client_protocol::ToolCallStatus::Completed
+                                            | agent_client_protocol::ToolCallStatus::Failed
+                                    );
 
-                            if is_terminal {
-                                if let Some((channel, ts, tool_call)) = tool_messages_clone
-                                    .write()
-                                    .await
-                                    .remove(&update.tool_call_id.to_string())
-                                {
-                                    let status_emoji = match status {
+                                    if is_terminal {
+                                        if let Some((channel, ts, tool_call)) = tool_messages_clone
+                                            .write()
+                                            .await
+                                            .remove(&update.tool_call_id.to_string())
+                                        {
+                                            let status_emoji = match status {
                                         agent_client_protocol::ToolCallStatus::Completed => "✅",
                                         agent_client_protocol::ToolCallStatus::Failed => "❌",
                                         _ => unreachable!(),
                                     };
 
-                                    let msg = format!("{} Tool: {}", status_emoji, tool_call.title);
+                                            let msg = format!(
+                                                "{} Tool: {}",
+                                                status_emoji, tool_call.title
+                                            );
 
-                                    let _ = slack_clone.update_message(&channel, &ts, &msg).await;
+                                            let _ = slack_clone
+                                                .update_message(&channel, &ts, &msg)
+                                                .await;
+                                        }
+                                    }
                                 }
                             }
+                            _ => {}
                         }
                     }
-                    _ => {}
                 }
             }
         }
@@ -520,6 +593,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
             pending_permissions.clone(),
             plan_buffers.clone(),
             plan_messages.clone(),
+            notification_tx.clone(),
         )
         .await;
     }

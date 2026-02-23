@@ -19,6 +19,7 @@ pub async fn handle_message(
     thought_buffers: bridge::ThoughtBuffers,
     plan_buffers: bridge::PlanBuffers,
     plan_messages: bridge::PlanMessages,
+    notification_tx: tokio::sync::mpsc::UnboundedSender<bridge::NotificationWrapper>,
 ) {
     let thread_key = thread_ts.unwrap_or(channel);
     debug!(
@@ -99,37 +100,10 @@ pub async fn handle_message(
     tokio::spawn(async move {
         match agent_manager_clone.prompt(&agent_name, prompt_req).await {
             Ok(resp) => {
-                // Prompt completed - flush any buffered message chunks
                 tracing::info!("Prompt completed with stop_reason: {:?}", resp.stop_reason);
 
-                // TODO: optimize this - sleep to ensure all messages are collected
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-                if let Some(buffer) = message_buffers.write().await.remove(&session_id) {
-                    if !buffer.is_empty() {
-                        debug!("Flushing {} chars from message buffer", buffer.len());
-                        let _ = slack_clone
-                            .send_message(&channel, thread_ts.as_deref(), &buffer)
-                            .await;
-                    }
-                }
-
-                if let Some(thought_buffer) = thought_buffers.write().await.remove(&session_id) {
-                    if !thought_buffer.is_empty() {
-                        debug!(
-                            "Flushing {} chars from thought buffer",
-                            thought_buffer.len()
-                        );
-                        let formatted = thought_buffer
-                            .lines()
-                            .map(|line| format!("> {}", line))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        let _ = slack_clone
-                            .send_message(&channel, thread_ts.as_deref(), &formatted)
-                            .await;
-                    }
-                }
+                let _ = notification_tx
+                    .send(bridge::NotificationWrapper::PromptCompleted { session_id });
             }
             Err(e) => {
                 tracing::error!("Failed to send prompt: {}", e);
