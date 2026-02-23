@@ -135,7 +135,7 @@ pub async fn handle_command(
                         .send_message(
                             channel,
                             Some(ts),
-                            &format!("Session started with agent: `{}`.\nWorking directory: `{}`\nSend messages in this thread to interact with it.\n\n{}", agent_name, workspace_path, HELP_MESSAGE),
+                            &format!("Session started with agent: `{}`\nWorking directory: `{}`\nSend messages in this thread to interact with it.\n\n{}", agent_name, workspace_path, HELP_MESSAGE),
                         )
                         .await;
                 }
