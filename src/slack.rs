@@ -191,13 +191,12 @@ impl SlackConnection {
         );
         trace!("Message text: {}", text);
 
-        let encoded_text = encode_slack_text(text);
         let blocks = vec![json!({
             "type": "markdown",
-            "text": encoded_text
+            "text": text
         })];
 
-        self.send_message_with_blocks(channel, thread_ts, &encoded_text, blocks)
+        self.send_message_with_blocks(channel, thread_ts, text, blocks)
             .await
     }
 
@@ -211,13 +210,12 @@ impl SlackConnection {
             text.len()
         );
 
-        let encoded_text = encode_slack_text(text);
         let blocks = vec![json!({
             "type": "markdown",
-            "text": encoded_text
+            "text": text
         })];
 
-        self.update_message_with_blocks(channel, ts, &encoded_text, blocks)
+        self.update_message_with_blocks(channel, ts, text, blocks)
             .await
     }
 
