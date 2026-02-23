@@ -69,8 +69,12 @@ cargo install --git https://github.com/DiscreteTom/juan
 ## Usage
 
 ```bash
-# Create a config file
+# Create a config file (juan.toml)
 juan init
+
+# Edit config file to set your Slack tokens
+# - Set bot_token (starts with xoxb-)
+# - Set app_token (starts with xapp-)
 
 # Run with default config file (juan.toml)
 juan run
