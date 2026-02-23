@@ -13,10 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `#read` and `!<command>` now work outside agent threads using default workspace from config
 - Text content from tool calls is now uploaded as plain text files for easier viewing
 - Command `#mode` to show available modes and current mode
-- Command `#mode <value>` to switch session mode
+- Command `#mode <value>` to switch session mode via config options or deprecated modes API
 - Command `#model` to show available models and current model
-- Command `#model <value>` to switch session model
-- Support for ACP Session Config Options protocol
+- Command `#model <value>` to switch session model via config options
+- Support for ACP Session Config Options protocol (new standard API)
+- Support for deprecated `session/set_mode` API for backward compatibility with agents using older ACP versions
 
 ### Changed
 

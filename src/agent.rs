@@ -60,6 +60,11 @@ enum AgentCommand {
         req: SetSessionConfigOptionRequest,
         resp_tx: oneshot::Sender<agent_client_protocol::Result<SetSessionConfigOptionResponse>>,
     },
+    /// Set session mode (deprecated)
+    SetMode {
+        req: SetSessionModeRequest,
+        resp_tx: oneshot::Sender<agent_client_protocol::Result<SetSessionModeResponse>>,
+    },
 }
 
 impl AgentManager {
@@ -201,6 +206,15 @@ impl AgentManager {
                             trace!("SetConfigOption result: {:?}", result);
                             let _ = resp_tx.send(result);
                         }
+                        AgentCommand::SetMode { req, resp_tx } => {
+                            debug!(
+                                "Agent {} processing SetMode request for session {}",
+                                agent_name, req.session_id
+                            );
+                            let result = connection.set_session_mode(req).await;
+                            trace!("SetMode result: {:?}", result);
+                            let _ = resp_tx.send(result);
+                        }
                     }
                 }
             }));
@@ -301,6 +315,36 @@ impl AgentManager {
         let (resp_tx, resp_rx) = oneshot::channel();
         handle
             .send(AgentCommand::SetConfigOption { req, resp_tx })
+            .context("Failed to send command to agent")?;
+
+        resp_rx
+            .await
+            .context("Agent command channel closed")?
+            .map_err(|e| anyhow::anyhow!("Agent error: {}", e))
+    }
+
+    /// Sets session mode (deprecated API).
+    pub async fn set_mode(
+        &self,
+        agent_name: &str,
+        req: SetSessionModeRequest,
+    ) -> Result<SetSessionModeResponse> {
+        debug!(
+            "Setting mode for agent: {}, session: {}, mode_id: {}",
+            agent_name, req.session_id, req.mode_id
+        );
+        let handle = self
+            .agents
+            .read()
+            .await
+            .get(agent_name)
+            .ok_or_else(|| anyhow::anyhow!("Agent not found: {}", agent_name))?
+            .tx
+            .clone();
+
+        let (resp_tx, resp_rx) = oneshot::channel();
+        handle
+            .send(AgentCommand::SetMode { req, resp_tx })
             .context("Failed to send command to agent")?;
 
         resp_rx

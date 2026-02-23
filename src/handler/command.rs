@@ -115,6 +115,12 @@ pub async fn handle_command(
                             debug!("Failed to store initial config options: {}", e);
                         }
                     }
+                    // Store deprecated modes if provided
+                    if let Some(modes) = resp.modes.clone() {
+                        if let Err(e) = session_manager.update_modes(ts, modes).await {
+                            debug!("Failed to store initial modes: {}", e);
+                        }
+                    }
                     resp.session_id
                 }
                 Err(e) => {
@@ -449,6 +455,7 @@ pub async fn handle_command(
             let session = session.unwrap();
             if parts.len() < 2 {
                 // Show available modes
+                // Try config_options first (new API)
                 if let Some(config_options) = &session.config_options {
                     if let Some(mode_option) = config_options.iter().find(|opt| {
                         matches!(
@@ -505,24 +512,40 @@ pub async fn handle_command(
                             };
                             let msg = format!("Available modes:\n{}", options);
                             let _ = slack.send_message(channel, thread_ts, &msg).await;
-                        } else {
-                            let _ = slack
-                                .send_message(channel, thread_ts, "Mode option is not a selector.")
-                                .await;
+                            return;
                         }
-                    } else {
-                        let _ = slack
-                            .send_message(channel, thread_ts, "No mode configuration available.")
-                            .await;
                     }
+                }
+
+                // Fallback to deprecated modes API
+                if let Some(modes) = &session.modes {
+                    let current = &modes.current_mode_id;
+                    let options = modes
+                        .available_modes
+                        .iter()
+                        .map(|mode| {
+                            let marker = if mode.id == *current { "→" } else { " " };
+                            format!(
+                                "{} `{}` - {}",
+                                marker,
+                                mode.id,
+                                mode.description.as_deref().unwrap_or(&mode.name)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let msg = format!("Available modes:\n{}", options);
+                    let _ = slack.send_message(channel, thread_ts, &msg).await;
                 } else {
                     let _ = slack
-                        .send_message(channel, thread_ts, "No configuration options available.")
+                        .send_message(channel, thread_ts, "No mode configuration available.")
                         .await;
                 }
             } else {
                 // Switch mode
                 let mode_value = parts[1].to_string();
+
+                // Try config_options first (new API)
                 if let Some(config_options) = &session.config_options {
                     if let Some(mode_option) = config_options.iter().find(|opt| {
                         matches!(
@@ -547,25 +570,44 @@ pub async fn handle_command(
                                         &format!("Mode switched to: `{}`", mode_value),
                                     )
                                     .await;
+                                return;
                             }
                             Err(e) => {
-                                let _ = slack
-                                    .send_message(
-                                        channel,
-                                        thread_ts,
-                                        &format!("Failed to switch mode: {}", e),
-                                    )
-                                    .await;
+                                debug!("Failed to set mode via config_options: {}", e);
                             }
                         }
-                    } else {
-                        let _ = slack
-                            .send_message(channel, thread_ts, "No mode configuration available.")
-                            .await;
+                    }
+                }
+
+                // Fallback to deprecated modes API
+                if let Some(_modes) = &session.modes {
+                    let req = agent_client_protocol::SetSessionModeRequest::new(
+                        session.session_id.clone(),
+                        mode_value.clone(),
+                    );
+                    match agent_manager.set_mode(&session.agent_name, req).await {
+                        Ok(_) => {
+                            let _ = slack
+                                .send_message(
+                                    channel,
+                                    thread_ts,
+                                    &format!("Mode switched to: `{}`", mode_value),
+                                )
+                                .await;
+                        }
+                        Err(e) => {
+                            let _ = slack
+                                .send_message(
+                                    channel,
+                                    thread_ts,
+                                    &format!("Failed to switch mode: {}", e),
+                                )
+                                .await;
+                        }
                     }
                 } else {
                     let _ = slack
-                        .send_message(channel, thread_ts, "No configuration options available.")
+                        .send_message(channel, thread_ts, "No mode configuration available.")
                         .await;
                 }
             }
@@ -595,6 +637,7 @@ pub async fn handle_command(
             let session = session.unwrap();
             if parts.len() < 2 {
                 // Show available models
+                // Try config_options (new API)
                 if let Some(config_options) = &session.config_options {
                     if let Some(model_option) = config_options.iter().find(|opt| {
                         matches!(
@@ -663,12 +706,14 @@ pub async fn handle_command(
                     }
                 } else {
                     let _ = slack
-                        .send_message(channel, thread_ts, "No configuration options available.")
+                        .send_message(channel, thread_ts, "No model configuration available.")
                         .await;
                 }
             } else {
                 // Switch model
                 let model_value = parts[1].to_string();
+
+                // Try config_options (new API)
                 if let Some(config_options) = &session.config_options {
                     if let Some(model_option) = config_options.iter().find(|opt| {
                         matches!(
@@ -711,7 +756,7 @@ pub async fn handle_command(
                     }
                 } else {
                     let _ = slack
-                        .send_message(channel, thread_ts, "No configuration options available.")
+                        .send_message(channel, thread_ts, "No model configuration available.")
                         .await;
                 }
             }

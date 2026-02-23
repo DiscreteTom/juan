@@ -114,6 +114,19 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             debug!("Failed to update config options: {}", e);
                         }
                     }
+                    agent_client_protocol::SessionUpdate::CurrentModeUpdate(update) => {
+                        // Update stored mode (deprecated API)
+                        if let Some(modes) = &session.modes {
+                            let mut updated_modes = modes.clone();
+                            updated_modes.current_mode_id = update.current_mode_id;
+                            if let Err(e) = session_manager_clone
+                                .update_modes(&thread_key, updated_modes)
+                                .await
+                            {
+                                debug!("Failed to update mode: {}", e);
+                            }
+                        }
+                    }
                     agent_client_protocol::SessionUpdate::AgentThoughtChunk(chunk) => {
                         if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
                             let _ = slack_clone
