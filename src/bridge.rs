@@ -11,6 +11,9 @@ use crate::{agent, config, handler, session, slack};
 /// Shared message buffer for accumulating agent message chunks
 pub type MessageBuffers = Arc<RwLock<HashMap<SessionId, String>>>;
 
+/// Shared thought buffer for accumulating agent thought chunks
+pub type ThoughtBuffers = Arc<RwLock<HashMap<SessionId, String>>>;
+
 /// Shared map for tracking tool call message timestamps
 pub type ToolCallMessages =
     Arc<RwLock<HashMap<String, (String, String, agent_client_protocol::ToolCall)>>>; // tool_call_id -> (channel, ts, tool_call)
@@ -63,6 +66,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
     // Create shared message buffers for accumulating chunks
     let message_buffers: MessageBuffers = Arc::new(RwLock::new(HashMap::new()));
+    let thought_buffers: ThoughtBuffers = Arc::new(RwLock::new(HashMap::new()));
 
     // Create shared map for tracking tool call messages
     let tool_call_messages: ToolCallMessages = Arc::new(RwLock::new(HashMap::new()));
@@ -77,6 +81,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     let slack_clone = slack.clone();
     let session_manager_clone = session_manager.clone();
     let buffers_clone = message_buffers.clone();
+    let thought_buffers_clone = thought_buffers.clone();
     let tool_messages_clone = tool_call_messages.clone();
     let plan_buffers_clone = plan_buffers.clone();
     let plan_messages_clone = plan_messages.clone();
@@ -105,7 +110,24 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                 match notification.update {
                     agent_client_protocol::SessionUpdate::AgentMessageChunk(chunk) => {
                         if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
-                            // Buffer the chunk
+                            // Flush thought buffer if exists
+                            if let Some(thought_buffer) = thought_buffers_clone
+                                .write()
+                                .await
+                                .remove(&notification.session_id)
+                            {
+                                if !thought_buffer.is_empty() {
+                                    let _ = slack_clone
+                                        .send_message(
+                                            &session.channel,
+                                            Some(&thread_key),
+                                            &thought_buffer,
+                                        )
+                                        .await;
+                                }
+                            }
+
+                            // Buffer the message chunk
                             buffers_clone
                                 .write()
                                 .await
@@ -148,6 +170,23 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             }
                         }
 
+                        // Flush accumulated thought chunks before plan
+                        if let Some(thought_buffer) = thought_buffers_clone
+                            .write()
+                            .await
+                            .remove(&notification.session_id)
+                        {
+                            if !thought_buffer.is_empty() {
+                                let _ = slack_clone
+                                    .send_message(
+                                        &session.channel,
+                                        Some(&thread_key),
+                                        &thought_buffer,
+                                    )
+                                    .await;
+                            }
+                        }
+
                         let entries = {
                             let mut plans = plan_buffers_clone.write().await;
                             let session_plan =
@@ -173,8 +212,23 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                     }
                     agent_client_protocol::SessionUpdate::AgentThoughtChunk(chunk) => {
                         if let agent_client_protocol::ContentBlock::Text(text) = chunk.content {
-                            // Append thought to message buffer
-                            buffers_clone
+                            // Flush message buffer if exists
+                            if let Some(message_buffer) =
+                                buffers_clone.write().await.remove(&notification.session_id)
+                            {
+                                if !message_buffer.is_empty() {
+                                    let _ = slack_clone
+                                        .send_message(
+                                            &session.channel,
+                                            Some(&thread_key),
+                                            &message_buffer,
+                                        )
+                                        .await;
+                                }
+                            }
+
+                            // Buffer the thought chunk
+                            thought_buffers_clone
                                 .write()
                                 .await
                                 .entry(notification.session_id.clone())
@@ -190,6 +244,23 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             if !buffer.is_empty() {
                                 let _ = slack_clone
                                     .send_message(&session.channel, Some(&thread_key), &buffer)
+                                    .await;
+                            }
+                        }
+
+                        // Flush accumulated thought chunks before tool call
+                        if let Some(thought_buffer) = thought_buffers_clone
+                            .write()
+                            .await
+                            .remove(&notification.session_id)
+                        {
+                            if !thought_buffer.is_empty() {
+                                let _ = slack_clone
+                                    .send_message(
+                                        &session.channel,
+                                        Some(&thread_key),
+                                        &thought_buffer,
+                                    )
                                     .await;
                             }
                         }
@@ -445,6 +516,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
             agent_manager.clone(),
             session_manager.clone(),
             message_buffers.clone(),
+            thought_buffers.clone(),
             pending_permissions.clone(),
             plan_buffers.clone(),
             plan_messages.clone(),

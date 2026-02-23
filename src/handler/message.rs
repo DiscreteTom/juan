@@ -16,6 +16,7 @@ pub async fn handle_message(
     agent_manager: Arc<agent::AgentManager>,
     session_manager: Arc<session::SessionManager>,
     message_buffers: bridge::MessageBuffers,
+    thought_buffers: bridge::ThoughtBuffers,
     plan_buffers: bridge::PlanBuffers,
     plan_messages: bridge::PlanMessages,
 ) {
@@ -40,6 +41,7 @@ pub async fn handle_message(
 
     // Reset plan UI state for new user message
     message_buffers.write().await.remove(&session.session_id);
+    thought_buffers.write().await.remove(&session.session_id);
     plan_buffers.write().await.remove(&session.session_id);
     plan_messages.write().await.remove(&session.session_id);
 
@@ -108,6 +110,18 @@ pub async fn handle_message(
                         debug!("Flushing {} chars from message buffer", buffer.len());
                         let _ = slack_clone
                             .send_message(&channel, thread_ts.as_deref(), &buffer)
+                            .await;
+                    }
+                }
+
+                if let Some(thought_buffer) = thought_buffers.write().await.remove(&session_id) {
+                    if !thought_buffer.is_empty() {
+                        debug!(
+                            "Flushing {} chars from thought buffer",
+                            thought_buffer.len()
+                        );
+                        let _ = slack_clone
+                            .send_message(&channel, thread_ts.as_deref(), &thought_buffer)
                             .await;
                     }
                 }
