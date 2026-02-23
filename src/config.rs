@@ -55,6 +55,9 @@ pub struct AgentConfig {
     /// Default mode to set when creating a new session
     #[serde(default)]
     pub default_mode: Option<String>,
+    /// Default model to set when creating a new session
+    #[serde(default)]
+    pub default_model: Option<String>,
 }
 
 impl Config {
@@ -104,6 +107,7 @@ impl Config {
                     env: HashMap::new(),
                     auto_approve: false,
                     default_mode: None,
+                    default_model: None,
                 },
                 AgentConfig {
                     name: "opencode".into(),
@@ -113,6 +117,7 @@ impl Config {
                     env: HashMap::new(),
                     auto_approve: false,
                     default_mode: None,
+                    default_model: None,
                 },
             ],
         };

@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for ACP Session Config Options protocol (new standard API)
 - Support for deprecated `session/set_mode` API for backward compatibility with agents using older ACP versions
 - Agent config option `default_mode` to automatically set mode when creating new sessions
+- Agent config option `default_model` to automatically set model when creating new sessions
 
 ### Changed
 

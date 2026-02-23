@@ -198,6 +198,28 @@ pub async fn handle_command(
                         }
                     }
 
+                    // Set default model if configured
+                    if let Some(default_model) = &agent_config.default_model {
+                        debug!("Setting default model: {}", default_model);
+                        if let Some(session) = session_manager.get_session(ts).await {
+                            if let Some(config_options) = &session.config_options {
+                                if let Some(model_option) = config_options.iter().find(|opt| {
+                                    matches!(
+                                        opt.category,
+                                        Some(agent_client_protocol::SessionConfigOptionCategory::Model)
+                                    )
+                                }) {
+                                    let req = agent_client_protocol::SetSessionConfigOptionRequest::new(
+                                        session_id.clone(),
+                                        model_option.id.clone(),
+                                        default_model.clone(),
+                                    );
+                                    let _ = agent_manager.set_config_option(agent_name, req).await;
+                                }
+                            }
+                        }
+                    }
+
                     let workspace_path =
                         workspace.unwrap_or_else(|| config.bridge.default_workspace.clone());
                     let _ = slack
