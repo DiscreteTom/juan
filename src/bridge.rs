@@ -137,6 +137,17 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                         }
                     }
                     agent_client_protocol::SessionUpdate::Plan(plan) => {
+                        // Flush accumulated message chunks before plan
+                        if let Some(buffer) =
+                            buffers_clone.write().await.remove(&notification.session_id)
+                        {
+                            if !buffer.is_empty() {
+                                let _ = slack_clone
+                                    .send_message(&session.channel, Some(&thread_key), &buffer)
+                                    .await;
+                            }
+                        }
+
                         let entries = {
                             let mut plans = plan_buffers_clone.write().await;
                             let session_plan =
