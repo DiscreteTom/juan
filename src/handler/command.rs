@@ -6,7 +6,7 @@ use tracing::debug;
 ///
 /// Supported commands:
 /// - #help - Show available commands
-/// - #new <name> [workspace] - Start a new session
+/// - #new <agent> [workspace] - Start a new session
 /// - #agents - List available agents
 /// - #session - Show current session info
 /// - #sessions - Show all active sessions
@@ -425,7 +425,7 @@ pub async fn handle_command(
 
 const HELP_MESSAGE: &str = "Available commands:
 • #help - Show this help message
-• #new <name> [workspace] - Start a new agent session in a thread
+• #new <agent> [workspace] - Start a new agent session in a thread
 • #agents - List available agents
 • #session - Show current agent session info
 • #sessions - Show all active sessions
