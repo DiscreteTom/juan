@@ -67,7 +67,7 @@ pub struct SlackConnection {
     client: Arc<SlackClient<SlackClientHyperHttpsConnector>>,
     bot_token: SlackApiToken,
     bot_token_str: String,
-    api_tx: mpsc::UnboundedSender<tokio::sync::oneshot::Sender<()>>,
+    rate_limit_tx: mpsc::UnboundedSender<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl SlackConnection {
@@ -75,27 +75,29 @@ impl SlackConnection {
     /// Does not establish connection yet - call connect() to start listening.
     pub fn new(bot_token: String) -> Self {
         let client = Arc::new(SlackClient::new(SlackClientHyperConnector::new().unwrap()));
-        let (api_tx, api_rx) = mpsc::unbounded_channel();
+        let (rate_limit_tx, rate_limit_rx) = mpsc::unbounded_channel();
 
         tokio::spawn(async move {
-            Self::api_debounce_worker(api_rx).await;
+            Self::rate_limit_worker(rate_limit_rx).await;
         });
 
         Self {
             client,
             bot_token: SlackApiToken::new(bot_token.clone().into()),
             bot_token_str: bot_token,
-            api_tx,
+            rate_limit_tx,
         }
     }
 
-    async fn api_debounce_worker(
-        mut api_rx: mpsc::UnboundedReceiver<tokio::sync::oneshot::Sender<()>>,
+    /// Rate limiting worker that ensures API requests are spaced out by at least MIN_INTERVAL.
+    /// Receives permit requests and sends back permits after enforcing the minimum interval.
+    async fn rate_limit_worker(
+        mut rate_limit_rx: mpsc::UnboundedReceiver<tokio::sync::oneshot::Sender<()>>,
     ) {
         const MIN_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_millis(800);
 
-        while let Some(resp_tx) = api_rx.recv().await {
-            let _ = resp_tx.send(());
+        while let Some(permit_tx) = rate_limit_rx.recv().await {
+            let _ = permit_tx.send(());
             tokio::time::sleep(MIN_INTERVAL).await;
         }
     }
@@ -205,7 +207,7 @@ impl SlackConnection {
         title: Option<&str>,
     ) -> Result<()> {
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-        self.api_tx
+        self.rate_limit_tx
             .send(resp_tx)
             .context("Failed to send upload file request")?;
 
@@ -283,7 +285,7 @@ impl SlackConnection {
         }
 
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-        self.api_tx
+        self.rate_limit_tx
             .send(resp_tx)
             .context("Failed to send API request to debounce worker")?;
 
@@ -313,7 +315,7 @@ impl SlackConnection {
         });
 
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-        self.api_tx
+        self.rate_limit_tx
             .send(resp_tx)
             .context("Failed to send API request to debounce worker")?;
 
