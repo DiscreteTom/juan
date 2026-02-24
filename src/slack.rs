@@ -221,7 +221,9 @@ impl SlackConnection {
             .send(resp_tx)
             .context("Failed to send upload file request")?;
 
-        resp_rx.await.context("Debounce worker dropped response")?;
+        resp_rx
+            .await
+            .context("Rate limit worker dropped response")?;
 
         debug!(
             "Uploading file to channel={}, thread_ts={:?}, filename={}",
@@ -297,9 +299,11 @@ impl SlackConnection {
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.rate_limit_tx
             .send(resp_tx)
-            .context("Failed to send API request to debounce worker")?;
+            .context("Failed to send API request to rate limit worker")?;
 
-        resp_rx.await.context("Debounce worker dropped response")?;
+        resp_rx
+            .await
+            .context("Rate limit worker dropped response")?;
 
         let resp =
             Self::invoke_slack_api_static("chat.postMessage", &body, &self.bot_token_str).await?;
@@ -327,9 +331,11 @@ impl SlackConnection {
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.rate_limit_tx
             .send(resp_tx)
-            .context("Failed to send API request to debounce worker")?;
+            .context("Failed to send API request to rate limit worker")?;
 
-        resp_rx.await.context("Debounce worker dropped response")?;
+        resp_rx
+            .await
+            .context("Rate limit worker dropped response")?;
 
         Self::invoke_slack_api_static("chat.update", &body, &self.bot_token_str).await?;
         Ok(())
