@@ -300,25 +300,21 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     }
                                 }
 
+                                // Update tool call message when status changes to terminal state
                                 if let Some(status) = update.fields.status {
-                                    let is_terminal = matches!(
-                                        status,
-                                        agent_client_protocol::ToolCallStatus::Completed
-                                            | agent_client_protocol::ToolCallStatus::Failed
-                                    );
-
-                                    if is_terminal {
+                                    if let Some(status_emoji) = match status {
+                                        agent_client_protocol::ToolCallStatus::Completed => {
+                                            Some("✅")
+                                        }
+                                        agent_client_protocol::ToolCallStatus::Failed => Some("❌"),
+                                        _ => None,
+                                    } {
+                                        // Remove from tracking and update the Slack message
                                         if let Some((channel, ts, tool_call)) = tool_messages_clone
                                             .write()
                                             .await
                                             .remove(&update.tool_call_id.to_string())
                                         {
-                                            let status_emoji = match status {
-                                        agent_client_protocol::ToolCallStatus::Completed => "✅",
-                                        agent_client_protocol::ToolCallStatus::Failed => "❌",
-                                        _ => unreachable!(),
-                                    };
-
                                             let msg = format!(
                                                 "{} Tool: {}",
                                                 status_emoji, tool_call.title
