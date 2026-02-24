@@ -607,9 +607,9 @@ fn build_plan_block_payload(entries: &[agent_client_protocol::PlanEntry]) -> Val
         .count();
 
     let title = if total > 0 && completed == total {
-        "Thinking completed".to_string()
+        "Plan finished".to_string()
     } else {
-        "Thinking".to_string()
+        "Plan updated".to_string()
     };
 
     let tasks = entries
