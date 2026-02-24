@@ -106,7 +106,7 @@ impl SlackConnection {
         app_token: String,
         event_tx: mpsc::UnboundedSender<SlackEvent>,
     ) -> Result<()> {
-        info!("Connecting to Slack Socket Mode");
+        debug!("Connecting to Slack Socket Mode");
 
         // Register push event callback handler
         let callbacks = SlackSocketModeListenerCallbacks::new().with_push_events(handle_push_event);

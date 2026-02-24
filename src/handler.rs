@@ -32,7 +32,7 @@ pub async fn handle_event(
     plan_messages: PlanMessages,
     notification_tx: tokio::sync::mpsc::UnboundedSender<crate::bridge::NotificationWrapper>,
 ) {
-    tracing::info!("Received event: {:?}", event);
+    tracing::debug!("Received event: {:?}", event);
 
     let SlackEvent {
         channel,

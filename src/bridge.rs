@@ -40,7 +40,6 @@ pub type PlanBuffers = Arc<RwLock<HashMap<SessionId, Vec<agent_client_protocol::
 pub type PlanMessages = Arc<RwLock<HashMap<SessionId, (String, String)>>>;
 
 pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
-    info!("Slack bot configured");
     info!("Default workspace: {}", config.bridge.default_workspace);
     info!("Auto-approve: {}", config.bridge.auto_approve);
     info!("Configured agents: {}", config.agents.len());
@@ -59,11 +58,11 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
         notification_tx.clone(),
         permission_request_tx,
     ));
-    info!("Agent manager initialized (agents will spawn on-demand)");
+    debug!("Agent manager initialized (agents will spawn on-demand)");
 
     // Create session manager to track Slack thread -> agent session mappings
     let session_manager = Arc::new(session::SessionManager::new(config.clone()));
-    info!("Session manager initialized");
+    debug!("Session manager initialized");
 
     // Create Slack client and event channel (Slack -> main loop)
     let slack = Arc::new(slack::SlackConnection::new(config.slack.bot_token.clone()));
@@ -529,14 +528,14 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     let slack_clone = slack.clone();
     let app_token = config.slack.app_token.clone();
     tokio::spawn(async move {
-        info!("Connecting to Slack...");
+        debug!("Connecting to Slack...");
         if let Err(e) = slack_clone.connect(app_token, event_tx).await {
             tracing::error!("Slack connection error: {}", e);
         }
     });
 
     // Main event loop: process Slack events
-    info!("Entering main event loop");
+    debug!("Entering main event loop");
     while let Some(event) = event_rx.recv().await {
         debug!("Processing event from main loop");
         // Spawn a new task for each event to prevent blocking
