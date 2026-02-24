@@ -95,11 +95,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
         while let Some(wrapper) = notification_rx.recv().await {
             match wrapper {
                 NotificationWrapper::PromptCompleted { session_id } => {
-                    let session_info = session_manager_clone
-                        .list_sessions()
-                        .await
-                        .into_iter()
-                        .find(|(_, session)| session.session_id == session_id);
+                    let session_info = session_manager_clone.find_by_session_id(&session_id).await;
 
                     if let Some((thread_key, session)) = session_info {
                         flush_message_buffer(
@@ -125,10 +121,8 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
                     // Find the Slack thread for this session
                     let session_info = session_manager_clone
-                        .list_sessions()
-                        .await
-                        .into_iter()
-                        .find(|(_, session)| session.session_id == notification.session_id);
+                        .find_by_session_id(&notification.session_id)
+                        .await;
 
                     if let Some((thread_key, session)) = session_info {
                         debug!(
@@ -400,10 +394,8 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
             // Find the Slack thread for this session
             let session_info = session_manager_clone
-                .list_sessions()
-                .await
-                .into_iter()
-                .find(|(_, session)| session.session_id == permission_req.session_id);
+                .find_by_session_id(&permission_req.session_id)
+                .await;
 
             if let Some((thread_key, session)) = session_info {
                 // Format permission options

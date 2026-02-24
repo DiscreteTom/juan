@@ -147,6 +147,18 @@ impl SessionManager {
             .collect()
     }
 
+    /// Finds a session by session_id.
+    /// Returns (thread_key, session_state) if found.
+    pub async fn find_by_session_id(
+        &self,
+        session_id: &SessionId,
+    ) -> Option<(String, SessionState)> {
+        self.list_sessions()
+            .await
+            .into_iter()
+            .find(|(_, session)| &session.session_id == session_id)
+    }
+
     /// Updates the config_options for a session.
     pub async fn update_config_options(
         &self,
