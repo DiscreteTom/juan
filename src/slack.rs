@@ -41,24 +41,14 @@ fn decode_slack_text(text: &str) -> String {
     result
 }
 
-/// Simplified Slack event types used internally by the application.
+/// Simplified Slack event type used internally by the application.
 /// Converts from slack_morphism's complex event types to our domain model.
 #[derive(Debug, Clone)]
-pub enum SlackEvent {
-    /// Regular message in a channel or thread
-    Message {
-        channel: String,
-        ts: String,
-        thread_ts: Option<String>,
-        text: String,
-    },
-    /// Message that mentions the bot (e.g., @botname)
-    AppMention {
-        channel: String,
-        ts: String,
-        thread_ts: Option<String>,
-        text: String,
-    },
+pub struct SlackEvent {
+    pub channel: String,
+    pub ts: String,
+    pub thread_ts: Option<String>,
+    pub text: String,
 }
 
 /// Slack client wrapper for Socket Mode connection and API calls.
@@ -463,7 +453,7 @@ async fn handle_push_event(
                         user, msg.origin.channel
                     );
                     // Convert to SlackEvent and send to channel
-                    let _ = tx.send(SlackEvent::Message {
+                    let _ = tx.send(SlackEvent {
                         channel: msg
                             .origin
                             .channel
@@ -487,7 +477,7 @@ async fn handle_push_event(
             );
 
             // Convert to SlackEvent and send to channel
-            let _ = tx.send(SlackEvent::AppMention {
+            let _ = tx.send(SlackEvent {
                 channel: mention.channel.to_string(),
                 ts: mention.origin.ts.to_string(),
                 thread_ts: mention.origin.thread_ts.map(|ts| ts.to_string()),
