@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Slack plan block rendering for ACP plan updates
 - Fallback plan block updates derived from thoughts and tool-call lifecycle updates
 - Raw Slack Web API message post/update paths to support unsupported block types
-- Debounce logic for Slack API calls (minimum 800ms interval between messages)
+- Rate limiting for all Slack API calls (minimum 800ms interval)
+- Concurrent event handling to prevent blocking
 
 ### Changed
 
@@ -20,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed markdown-to-mrkdwn conversion (standard markdown now works natively)
 - Plan/think content now uses plain text instead of rich text formatting
 - Buffer flushing now uses notification channel instead of sleep-based timing
+- Simplified SlackEvent from enum to struct (both variants had identical fields)
+- Renamed rate limiting variables for clarity (debounce → rate_limit)
+- Moved implementation steps from doc comments to inline comments
 
 ### Fixed
 

@@ -539,20 +539,34 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     info!("Entering main event loop");
     while let Some(event) = event_rx.recv().await {
         debug!("Processing event from main loop");
-        handler::handle_event(
-            event,
-            slack.clone(),
-            config.clone(),
-            agent_manager.clone(),
-            session_manager.clone(),
-            message_buffers.clone(),
-            thought_buffers.clone(),
-            pending_permissions.clone(),
-            plan_buffers.clone(),
-            plan_messages.clone(),
-            notification_tx.clone(),
-        )
-        .await;
+        // Spawn a new task for each event to prevent blocking
+        let slack = slack.clone();
+        let config = config.clone();
+        let agent_manager = agent_manager.clone();
+        let session_manager = session_manager.clone();
+        let message_buffers = message_buffers.clone();
+        let thought_buffers = thought_buffers.clone();
+        let pending_permissions = pending_permissions.clone();
+        let plan_buffers = plan_buffers.clone();
+        let plan_messages = plan_messages.clone();
+        let notification_tx = notification_tx.clone();
+
+        tokio::spawn(async move {
+            handler::handle_event(
+                event,
+                slack,
+                config,
+                agent_manager,
+                session_manager,
+                message_buffers,
+                thought_buffers,
+                pending_permissions,
+                plan_buffers,
+                plan_messages,
+                notification_tx,
+            )
+            .await;
+        });
     }
 
     Ok(())
