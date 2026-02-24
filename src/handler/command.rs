@@ -311,7 +311,8 @@ pub async fn handle_command(
         }
         "#sessions" => {
             debug!("Processing #sessions command");
-            let sessions = session_manager.list_sessions().await;
+            let sessions_lock = session_manager.sessions();
+            let sessions = sessions_lock.read().await;
             if sessions.is_empty() {
                 let _ = slack
                     .send_message(channel, thread_ts, "No active sessions.")

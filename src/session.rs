@@ -136,15 +136,9 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Lists all active sessions.
-    /// Returns a vector of (thread_key, session_state) tuples.
-    pub async fn list_sessions(&self) -> Vec<(String, SessionState)> {
-        self.sessions
-            .read()
-            .await
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect()
+    /// Returns readonly access to all sessions.
+    pub fn sessions(&self) -> Arc<RwLock<HashMap<String, SessionState>>> {
+        self.sessions.clone()
     }
 
     /// Finds a session by session_id.
@@ -153,10 +147,12 @@ impl SessionManager {
         &self,
         session_id: &SessionId,
     ) -> Option<(String, SessionState)> {
-        self.list_sessions()
+        self.sessions
+            .read()
             .await
-            .into_iter()
+            .iter()
             .find(|(_, session)| &session.session_id == session_id)
+            .map(|(k, v)| (k.clone(), v.clone()))
     }
 
     /// Updates the config_options for a session.
