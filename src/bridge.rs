@@ -153,6 +153,19 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                         .push_str(&text.text);
                                 }
                             }
+                            agent_client_protocol::SessionUpdate::AgentThoughtChunk(chunk) => {
+                                if let agent_client_protocol::ContentBlock::Text(text) =
+                                    chunk.content
+                                {
+                                    // Buffer the thought chunk
+                                    thought_buffers_clone
+                                        .write()
+                                        .await
+                                        .entry(notification.session_id.clone())
+                                        .or_insert_with(String::new)
+                                        .push_str(&text.text);
+                                }
+                            }
                             agent_client_protocol::SessionUpdate::ConfigOptionUpdate(update) => {
                                 // Update stored config options
                                 if let Err(e) = session_manager_clone
@@ -197,19 +210,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     {
                                         tracing::error!("Failed to post ACP plan block: {}", e);
                                     }
-                                }
-                            }
-                            agent_client_protocol::SessionUpdate::AgentThoughtChunk(chunk) => {
-                                if let agent_client_protocol::ContentBlock::Text(text) =
-                                    chunk.content
-                                {
-                                    // Buffer the thought chunk
-                                    thought_buffers_clone
-                                        .write()
-                                        .await
-                                        .entry(notification.session_id.clone())
-                                        .or_insert_with(String::new)
-                                        .push_str(&text.text);
                                 }
                             }
                             agent_client_protocol::SessionUpdate::ToolCall(tool_call) => {
