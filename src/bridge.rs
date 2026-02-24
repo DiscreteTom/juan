@@ -136,21 +136,20 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             thread_key, notification.session_id
                         );
 
+                        let is_message_chunk = matches!(
+                            notification.update,
+                            agent_client_protocol::SessionUpdate::AgentMessageChunk(_)
+                        );
+                        let is_thought_chunk = matches!(
+                            notification.update,
+                            agent_client_protocol::SessionUpdate::AgentThoughtChunk(_)
+                        );
+
                         match notification.update {
                             agent_client_protocol::SessionUpdate::AgentMessageChunk(chunk) => {
                                 if let agent_client_protocol::ContentBlock::Text(text) =
                                     chunk.content
                                 {
-                                    // Flush thought buffer if exists
-                                    flush_thought_buffer(
-                                        &thought_buffers_clone,
-                                        &notification.session_id,
-                                        &slack_clone,
-                                        &session.channel,
-                                        &thread_key,
-                                    )
-                                    .await;
-
                                     // Buffer the message chunk
                                     buffers_clone
                                         .write()
@@ -183,26 +182,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 }
                             }
                             agent_client_protocol::SessionUpdate::Plan(plan) => {
-                                // Flush accumulated message chunks before plan
-                                flush_message_buffer(
-                                    &buffers_clone,
-                                    &notification.session_id,
-                                    &slack_clone,
-                                    &session.channel,
-                                    &thread_key,
-                                )
-                                .await;
-
-                                // Flush accumulated thought chunks before plan
-                                flush_thought_buffer(
-                                    &thought_buffers_clone,
-                                    &notification.session_id,
-                                    &slack_clone,
-                                    &session.channel,
-                                    &thread_key,
-                                )
-                                .await;
-
                                 let entries = {
                                     let mut plans = plan_buffers_clone.write().await;
                                     let session_plan =
@@ -230,16 +209,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 if let agent_client_protocol::ContentBlock::Text(text) =
                                     chunk.content
                                 {
-                                    // Flush message buffer if exists
-                                    flush_message_buffer(
-                                        &buffers_clone,
-                                        &notification.session_id,
-                                        &slack_clone,
-                                        &session.channel,
-                                        &thread_key,
-                                    )
-                                    .await;
-
                                     // Buffer the thought chunk
                                     thought_buffers_clone
                                         .write()
@@ -250,26 +219,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 }
                             }
                             agent_client_protocol::SessionUpdate::ToolCall(tool_call) => {
-                                // Flush accumulated message chunks before tool call
-                                flush_message_buffer(
-                                    &buffers_clone,
-                                    &notification.session_id,
-                                    &slack_clone,
-                                    &session.channel,
-                                    &thread_key,
-                                )
-                                .await;
-
-                                // Flush accumulated thought chunks before tool call
-                                flush_thought_buffer(
-                                    &thought_buffers_clone,
-                                    &notification.session_id,
-                                    &slack_clone,
-                                    &session.channel,
-                                    &thread_key,
-                                )
-                                .await;
-
                                 trace!(
                                     "ToolCall: id={}, title={}, kind={:?}",
                                     tool_call.tool_call_id, tool_call.title, tool_call.kind
@@ -407,6 +356,28 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 }
                             }
                             _ => {}
+                        }
+
+                        // Centralized flush logic: flush buffers if not currently accumulating
+                        if !is_message_chunk {
+                            flush_message_buffer(
+                                &buffers_clone,
+                                &notification.session_id,
+                                &slack_clone,
+                                &session.channel,
+                                &thread_key,
+                            )
+                            .await;
+                        }
+                        if !is_thought_chunk {
+                            flush_thought_buffer(
+                                &thought_buffers_clone,
+                                &notification.session_id,
+                                &slack_clone,
+                                &session.channel,
+                                &thread_key,
+                            )
+                            .await;
                         }
                     }
                 }
