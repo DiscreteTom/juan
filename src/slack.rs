@@ -74,13 +74,17 @@ impl SlackConnection {
     /// Creates a new Slack connection with the given bot token.
     /// Does not establish connection yet - call connect() to start listening.
     pub fn new(bot_token: String) -> Self {
+        // Create Slack HTTP client
         let client = Arc::new(SlackClient::new(SlackClientHyperConnector::new().unwrap()));
+        // Create rate limit channel
         let (rate_limit_tx, rate_limit_rx) = mpsc::unbounded_channel();
 
+        // Spawn rate limit worker task
         tokio::spawn(async move {
             Self::rate_limit_worker(rate_limit_rx).await;
         });
 
+        // Initialize connection struct
         Self {
             client,
             bot_token: SlackApiToken::new(bot_token.clone().into()),
@@ -97,7 +101,9 @@ impl SlackConnection {
         const MIN_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_millis(800);
 
         while let Some(permit_tx) = rate_limit_rx.recv().await {
+            // Immediately send permit back (allow request to proceed)
             let _ = permit_tx.send(());
+            // Sleep for MIN_INTERVAL to enforce rate limit
             tokio::time::sleep(MIN_INTERVAL).await;
         }
     }
@@ -112,7 +118,7 @@ impl SlackConnection {
     ) -> Result<()> {
         info!("Connecting to Slack Socket Mode");
 
-        // Register callback for push events (messages, mentions, etc.)
+        // Register push event callback handler
         let callbacks = SlackSocketModeListenerCallbacks::new().with_push_events(handle_push_event);
 
         // Create listener environment with event sender in user state
@@ -121,15 +127,18 @@ impl SlackConnection {
                 .with_user_state(event_tx),
         );
 
+        // Create Socket Mode listener
         let listener = SlackClientSocketModeListener::new(
             &SlackClientSocketModeConfig::new(),
             listener_env,
             callbacks,
         );
 
+        // Connect with app token
         let app_token = SlackApiToken::new(app_token.into());
         listener.listen_for(&app_token).await?;
         info!("Slack Socket Mode connected");
+        // Start serving events (blocks until disconnected)
         listener.serve().await;
 
         Ok(())
@@ -186,6 +195,7 @@ impl SlackConnection {
             channel, ts, emoji
         );
 
+        // Request rate limit permit
         let (permit_tx, permit_rx) = tokio::sync::oneshot::channel();
         self.rate_limit_tx
             .send(permit_tx)
@@ -195,6 +205,7 @@ impl SlackConnection {
             .await
             .context("Rate limit worker dropped response")?;
 
+        // Call Slack API reactions.add
         let session = self.client.open_session(&self.bot_token);
 
         let req = SlackApiReactionsAddRequest::new(channel.into(), emoji.into(), ts.into());
@@ -216,6 +227,7 @@ impl SlackConnection {
         filename: &str,
         title: Option<&str>,
     ) -> Result<()> {
+        // Request rate limit permit
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.rate_limit_tx
             .send(resp_tx)
@@ -231,7 +243,7 @@ impl SlackConnection {
         );
         let session = self.client.open_session(&self.bot_token);
 
-        // Step 1: Get upload URL
+        // Get upload URL from Slack (files.getUploadUrlExternal)
         let get_url_req =
             SlackApiFilesGetUploadUrlExternalRequest::new(filename.into(), content.len());
         let url_resp = session
@@ -239,7 +251,7 @@ impl SlackConnection {
             .await
             .context("Failed to get upload URL")?;
 
-        // Step 2: Upload file to the URL
+        // Upload file content to the URL via HTTP POST
         let http_client = reqwest::Client::new();
         http_client
             .post(url_resp.upload_url.0.as_str())
@@ -248,7 +260,7 @@ impl SlackConnection {
             .await
             .context("Failed to upload file content")?;
 
-        // Step 3: Complete the upload
+        // Complete the upload (files.completeUploadExternal) with channel/thread info
         let mut file_complete = SlackApiFilesComplete::new(url_resp.file_id);
         if let Some(title) = title {
             file_complete = file_complete.with_title(title.into());
@@ -274,6 +286,8 @@ impl SlackConnection {
         Ok(())
     }
 
+    /// Sends a message with custom blocks to a Slack channel or thread.
+    /// Returns the timestamp (ts) of the sent message.
     pub async fn send_message_with_blocks(
         &self,
         channel: &str,
@@ -281,12 +295,14 @@ impl SlackConnection {
         text: &str,
         blocks: Vec<Value>,
     ) -> Result<String> {
+        // Build request body with channel, text, and blocks
         let mut body = json!({
             "channel": channel,
             "text": text,
             "blocks": blocks
         });
 
+        // Add thread_ts if replying in a thread
         if let Some(thread_ts) = thread_ts {
             body.as_object_mut()
                 .context("Failed to build chat.postMessage body")?
@@ -296,6 +312,7 @@ impl SlackConnection {
                 );
         }
 
+        // Request rate limit permit
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.rate_limit_tx
             .send(resp_tx)
@@ -305,8 +322,10 @@ impl SlackConnection {
             .await
             .context("Rate limit worker dropped response")?;
 
+        // Call Slack API chat.postMessage
         let resp =
             Self::invoke_slack_api_static("chat.postMessage", &body, &self.bot_token_str).await?;
+        // Extract and return message timestamp
         let ts = resp
             .get("ts")
             .and_then(Value::as_str)
@@ -314,6 +333,7 @@ impl SlackConnection {
         Ok(ts.to_string())
     }
 
+    /// Updates an existing message with custom blocks.
     pub async fn update_message_with_blocks(
         &self,
         channel: &str,
@@ -321,6 +341,7 @@ impl SlackConnection {
         text: &str,
         blocks: Vec<Value>,
     ) -> Result<()> {
+        // Build request body with channel, ts, text, and blocks
         let body = json!({
             "channel": channel,
             "ts": ts,
@@ -328,6 +349,7 @@ impl SlackConnection {
             "blocks": blocks
         });
 
+        // Request rate limit permit
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         self.rate_limit_tx
             .send(resp_tx)
@@ -337,14 +359,19 @@ impl SlackConnection {
             .await
             .context("Rate limit worker dropped response")?;
 
+        // Call Slack API chat.update
         Self::invoke_slack_api_static("chat.update", &body, &self.bot_token_str).await?;
         Ok(())
     }
 
+    /// Low-level method to invoke Slack Web API endpoints.
+    /// Handles authentication, error checking, and response parsing.
     async fn invoke_slack_api_static(method: &str, body: &Value, bot_token: &str) -> Result<Value> {
+        // Build API URL from method name
         let uri = format!("https://slack.com/api/{method}");
         let client = reqwest::Client::new();
 
+        // Send POST request with bearer token auth
         let resp = client
             .post(uri)
             .bearer_auth(bot_token)
@@ -357,22 +384,26 @@ impl SlackConnection {
             .await
             .with_context(|| format!("Failed to call Slack API method {method}"))?;
 
+        // Parse JSON response
         let status = resp.status();
         let parsed: Value = resp
             .json()
             .await
             .with_context(|| format!("Failed to parse Slack API response for {method}"))?;
 
+        // Check HTTP status code
         if !status.is_success() {
             anyhow::bail!("Slack API {method} returned HTTP {status}: {parsed}");
         }
 
+        // Check Slack API 'ok' field
         if parsed.get("ok").and_then(Value::as_bool) != Some(true) {
             let err = parsed
                 .get("error")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown_error");
 
+            // Extract error details if present
             let details = parsed
                 .get("response_metadata")
                 .and_then(|v| v.get("messages"))
@@ -405,7 +436,7 @@ async fn handle_push_event(
     state: SlackClientEventsUserState,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     trace!("Received push event: {:?}", event.event);
-    // Extract the event sender channel from user state
+    // Extract event sender channel from user state
     let tx = state
         .read()
         .await
@@ -413,9 +444,10 @@ async fn handle_push_event(
         .cloned()
         .ok_or("No event sender in state")?;
 
+    // Match on event type (Message or AppMention)
     match event.event {
         SlackEventCallbackBody::Message(msg) => {
-            // Ignore messages from bots to prevent loops
+            // Ignore bot messages to prevent loops
             if msg.sender.bot_id.is_some() {
                 trace!("Ignoring bot message");
                 return Ok(());
@@ -423,12 +455,14 @@ async fn handle_push_event(
 
             if let Some(content) = msg.content {
                 if let Some(text) = content.text {
+                    // Decode Slack text formatting
                     let text = decode_slack_text(&text);
                     let user = msg.sender.user.map(|u| u.to_string()).unwrap_or_default();
                     debug!(
                         "Received message from user={}, channel={:?}",
                         user, msg.origin.channel
                     );
+                    // Convert to SlackEvent and send to channel
                     let _ = tx.send(SlackEvent::Message {
                         channel: msg
                             .origin
@@ -445,12 +479,14 @@ async fn handle_push_event(
         SlackEventCallbackBody::AppMention(mention) => {
             let user = mention.user.to_string();
             let text = mention.content.text.unwrap_or_default();
+            // Decode Slack text formatting
             let text = decode_slack_text(&text);
             debug!(
                 "Received app mention from user={}, channel={}",
                 user, mention.channel
             );
 
+            // Convert to SlackEvent and send to channel
             let _ = tx.send(SlackEvent::AppMention {
                 channel: mention.channel.to_string(),
                 ts: mention.origin.ts.to_string(),
