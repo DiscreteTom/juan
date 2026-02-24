@@ -172,7 +172,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                     .update_config_options(&thread_key, update.config_options)
                                     .await
                                 {
-                                    debug!("Failed to update config options: {}", e);
+                                    warn!("Failed to update config options: {}", e);
                                 }
                             }
                             agent_client_protocol::SessionUpdate::CurrentModeUpdate(update) => {
@@ -184,7 +184,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                         .update_modes(&thread_key, updated_modes)
                                         .await
                                     {
-                                        debug!("Failed to update mode: {}", e);
+                                        warn!("Failed to update mode: {}", e);
                                     }
                                 }
                             }
