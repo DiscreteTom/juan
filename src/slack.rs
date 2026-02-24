@@ -185,6 +185,16 @@ impl SlackConnection {
             "Adding reaction: channel={}, ts={}, emoji={}",
             channel, ts, emoji
         );
+
+        let (permit_tx, permit_rx) = tokio::sync::oneshot::channel();
+        self.rate_limit_tx
+            .send(permit_tx)
+            .context("Failed to send API request to rate limit worker")?;
+
+        permit_rx
+            .await
+            .context("Rate limit worker dropped response")?;
+
         let session = self.client.open_session(&self.bot_token);
 
         let req = SlackApiReactionsAddRequest::new(channel.into(), emoji.into(), ts.into());
