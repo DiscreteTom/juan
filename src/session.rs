@@ -26,6 +26,7 @@ pub struct SessionManager {
 
 /// State for a single active session.
 /// Tracks the connection between a Slack thread and an ACP agent session.
+#[derive(Clone)]
 pub struct SessionState {
     /// ACP session ID (initially a placeholder, updated after first message)
     pub session_id: SessionId,
@@ -178,22 +179,6 @@ impl SessionManager {
             Ok(())
         } else {
             Err(anyhow::anyhow!("Session not found: {}", thread_key))
-        }
-    }
-}
-
-impl Clone for SessionState {
-    fn clone(&self) -> Self {
-        Self {
-            session_id: self.session_id.clone(),
-            agent_name: self.agent_name.clone(),
-            workspace: self.workspace.clone(),
-            auto_approve: self.auto_approve,
-            channel: self.channel.clone(),
-            busy: self.busy,
-            initial_ts: self.initial_ts.clone(),
-            config_options: self.config_options.clone(),
-            modes: self.modes.clone(),
         }
     }
 }
