@@ -15,10 +15,6 @@ pub async fn handle_message(
     slack: Arc<slack::SlackConnection>,
     agent_manager: Arc<agent::AgentManager>,
     session_manager: Arc<session::SessionManager>,
-    message_buffers: bridge::MessageBuffers,
-    thought_buffers: bridge::ThoughtBuffers,
-    plan_buffers: bridge::PlanBuffers,
-    plan_messages: bridge::PlanMessages,
     notification_tx: tokio::sync::mpsc::UnboundedSender<bridge::NotificationWrapper>,
 ) {
     let thread_key = thread_ts.unwrap_or(channel);
@@ -28,23 +24,6 @@ pub async fn handle_message(
         text.len()
     );
     trace!("Message text: {}", text);
-
-    // Verify session exists for this thread
-    let session = match session_manager.get_session(thread_key).await {
-        Some(s) => s,
-        None => {
-            let _ = slack
-                .send_message(channel, thread_ts, "No active session. Use #help for help.")
-                .await;
-            return;
-        }
-    };
-
-    // Reset plan UI state for new user message
-    message_buffers.write().await.remove(&session.session_id);
-    thought_buffers.write().await.remove(&session.session_id);
-    plan_buffers.write().await.remove(&session.session_id);
-    plan_messages.write().await.remove(&session.session_id);
 
     // Verify session exists for this thread
     let session = match session_manager.get_session(thread_key).await {

@@ -5,7 +5,7 @@ mod shell;
 
 use crate::{
     agent::AgentManager,
-    bridge::{MessageBuffers, PendingPermissions, PlanBuffers, PlanMessages, ThoughtBuffers},
+    bridge::PendingPermissions,
     config::Config,
     handler::{
         command::handle_command, message::handle_message, permission::handle_permission_response,
@@ -25,11 +25,7 @@ pub async fn handle_event(
     config: Arc<Config>,
     agent_manager: Arc<AgentManager>,
     session_manager: Arc<SessionManager>,
-    message_buffers: MessageBuffers,
-    thought_buffers: ThoughtBuffers,
     pending_permissions: PendingPermissions,
-    plan_buffers: PlanBuffers,
-    plan_messages: PlanMessages,
     notification_tx: tokio::sync::mpsc::UnboundedSender<crate::bridge::NotificationWrapper>,
 ) {
     tracing::debug!("Received event: {:?}", event);
@@ -92,10 +88,6 @@ pub async fn handle_event(
         slack,
         agent_manager,
         session_manager,
-        message_buffers,
-        thought_buffers,
-        plan_buffers,
-        plan_messages,
         notification_tx,
     )
     .await;

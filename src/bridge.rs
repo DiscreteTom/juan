@@ -543,11 +543,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
         let config = config.clone();
         let agent_manager = agent_manager.clone();
         let session_manager = session_manager.clone();
-        let message_buffers = message_buffers.clone();
-        let thought_buffers = thought_buffers.clone();
         let pending_permissions = pending_permissions.clone();
-        let plan_buffers = plan_buffers.clone();
-        let plan_messages = plan_messages.clone();
         let notification_tx = notification_tx.clone();
 
         tokio::spawn(async move {
@@ -557,11 +553,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                 config,
                 agent_manager,
                 session_manager,
-                message_buffers,
-                thought_buffers,
                 pending_permissions,
-                plan_buffers,
-                plan_messages,
                 notification_tx,
             )
             .await;
