@@ -36,9 +36,6 @@ pub type PendingPermissions = Arc<
     >,
 >;
 
-pub type PlanBuffers = Arc<RwLock<HashMap<SessionId, Vec<agent_client_protocol::PlanEntry>>>>;
-pub type PlanMessages = Arc<RwLock<HashMap<SessionId, (String, String)>>>;
-
 pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     info!("Default workspace: {}", config.bridge.default_workspace);
     info!("Auto-approve: {}", config.bridge.auto_approve);
@@ -78,17 +75,12 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     // Create shared map for tracking pending permission requests
     let pending_permissions: PendingPermissions = Arc::new(RwLock::new(HashMap::new()));
 
-    let plan_buffers: PlanBuffers = Arc::new(RwLock::new(HashMap::new()));
-    let plan_messages: PlanMessages = Arc::new(RwLock::new(HashMap::new()));
-
     // Spawn task to handle agent notifications and forward to Slack
     let slack_clone = slack.clone();
     let session_manager_clone = session_manager.clone();
     let buffers_clone = message_buffers.clone();
     let thought_buffers_clone = thought_buffers.clone();
     let tool_messages_clone = tool_call_messages.clone();
-    let plan_buffers_clone = plan_buffers.clone();
-    let plan_messages_clone = plan_messages.clone();
     tokio::spawn(async move {
         debug!("Agent notification handler started");
 
@@ -189,22 +181,12 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 }
                             }
                             agent_client_protocol::SessionUpdate::Plan(plan) => {
-                                let entries = {
-                                    let mut plans = plan_buffers_clone.write().await;
-                                    let session_plan =
-                                        plans.entry(notification.session_id.clone()).or_default();
-                                    *session_plan = plan.entries.clone();
-                                    session_plan.clone()
-                                };
-
-                                if !entries.is_empty() {
-                                    if let Err(e) = upsert_plan_message(
+                                if !plan.entries.is_empty() {
+                                    if let Err(e) = send_plan_message(
                                         &slack_clone,
-                                        &plan_messages_clone,
-                                        &notification.session_id,
                                         &session.channel,
                                         &thread_key,
-                                        &entries,
+                                        &plan.entries,
                                     )
                                     .await
                                     {
@@ -677,10 +659,8 @@ fn format_plan_message(entries: &[agent_client_protocol::PlanEntry]) -> String {
     lines.join("\n")
 }
 
-async fn upsert_plan_message(
+async fn send_plan_message(
     slack: &Arc<slack::SlackConnection>,
-    plan_messages: &PlanMessages,
-    session_id: &SessionId,
     channel: &str,
     thread_key: &str,
     entries: &[agent_client_protocol::PlanEntry],
@@ -688,11 +668,11 @@ async fn upsert_plan_message(
     let fallback_text = format_plan_message(entries);
     let plan_block = build_plan_block_payload(entries);
 
-    let ts = match slack
+    match slack
         .send_message_with_blocks(channel, Some(thread_key), &fallback_text, vec![plan_block])
         .await
     {
-        Ok(ts) => ts,
+        Ok(_) => Ok(()),
         Err(e) => {
             warn!(
                 "Failed to send plan block message, falling back to text message: {}",
@@ -700,13 +680,8 @@ async fn upsert_plan_message(
             );
             slack
                 .send_message(channel, Some(thread_key), &fallback_text)
-                .await?
+                .await?;
+            Ok(())
         }
-    };
-    plan_messages
-        .write()
-        .await
-        .insert(session_id.clone(), (channel.to_string(), ts));
-
-    Ok(())
+    }
 }
