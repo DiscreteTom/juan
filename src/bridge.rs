@@ -122,14 +122,35 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             thread_key, notification.session_id
                         );
 
+                        // Centralized flush logic: flush buffers if not currently accumulating
                         let is_message_chunk = matches!(
                             notification.update,
                             agent_client_protocol::SessionUpdate::AgentMessageChunk(_)
                         );
+                        if !is_message_chunk {
+                            flush_message_buffer(
+                                &buffers_clone,
+                                &notification.session_id,
+                                &slack_clone,
+                                &session.channel,
+                                &thread_key,
+                            )
+                            .await;
+                        }
                         let is_thought_chunk = matches!(
                             notification.update,
                             agent_client_protocol::SessionUpdate::AgentThoughtChunk(_)
                         );
+                        if !is_thought_chunk {
+                            flush_thought_buffer(
+                                &thought_buffers_clone,
+                                &notification.session_id,
+                                &slack_clone,
+                                &session.channel,
+                                &thread_key,
+                            )
+                            .await;
+                        }
 
                         match notification.update {
                             agent_client_protocol::SessionUpdate::AgentMessageChunk(chunk) => {
@@ -377,28 +398,6 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                 }
                             }
                             _ => {}
-                        }
-
-                        // Centralized flush logic: flush buffers if not currently accumulating
-                        if !is_message_chunk {
-                            flush_message_buffer(
-                                &buffers_clone,
-                                &notification.session_id,
-                                &slack_clone,
-                                &session.channel,
-                                &thread_key,
-                            )
-                            .await;
-                        }
-                        if !is_thought_chunk {
-                            flush_thought_buffer(
-                                &thought_buffers_clone,
-                                &notification.session_id,
-                                &slack_clone,
-                                &session.channel,
-                                &thread_key,
-                            )
-                            .await;
                         }
                     }
                 }
