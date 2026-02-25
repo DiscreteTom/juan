@@ -709,7 +709,7 @@ pub async fn handle_command(
                 }
             } else {
                 // Switch mode
-                let mode_value = parts[1].to_string();
+                let mode_value = parts[1].trim_matches('`').to_string();
                 let force_mode = mode_value.ends_with('!');
                 let mode_value = if force_mode {
                     mode_value.trim_end_matches('!').to_string()
@@ -934,7 +934,7 @@ pub async fn handle_command(
                 }
             } else {
                 // Switch model
-                let model_value = parts[1].to_string();
+                let model_value = parts[1].trim_matches('`').to_string();
                 let force_model = model_value.ends_with('!');
                 let model_value = if force_model {
                     model_value.trim_end_matches('!').to_string()
