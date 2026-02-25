@@ -44,6 +44,8 @@ struct AgentHandle {
     tx: mpsc::UnboundedSender<AgentCommand>,
     /// Channel for sending cancel signal
     cancel_tx: mpsc::UnboundedSender<()>,
+    /// Child process handle
+    process: Arc<tokio::sync::Mutex<tokio::process::Child>>,
 }
 
 /// Commands that can be sent to an agent task.
@@ -135,6 +137,8 @@ impl AgentManager {
             .take()
             .context("Failed to get stdout")?
             .compat();
+
+        let process_handle = Arc::new(tokio::sync::Mutex::new(process));
 
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let (cancel_tx, mut cancel_rx) = mpsc::unbounded_channel();
@@ -253,6 +257,7 @@ impl AgentManager {
         let handle = AgentHandle {
             tx: cmd_tx,
             cancel_tx,
+            process: process_handle,
         };
         self.agents
             .write()
@@ -369,7 +374,15 @@ impl AgentManager {
     /// Ends a session and kills the agent process.
     pub async fn end_session(&self, session_id: &SessionId) -> Result<()> {
         info!("Ending session: {}", session_id);
-        self.agents.write().await.remove(session_id);
+
+        // Get handle and kill process
+        if let Some(handle) = self.agents.write().await.remove(session_id) {
+            let mut process = handle.process.lock().await;
+            if let Err(e) = process.kill().await {
+                error!("Failed to kill agent process: {}", e);
+            }
+        }
+
         self.session_permissions.write().await.remove(session_id);
         Ok(())
     }
