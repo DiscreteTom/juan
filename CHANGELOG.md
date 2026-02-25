@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Session config can be correctly initialized
+- `#read` command now correctly handles absolute paths and `~` paths on all platforms
 
 ## [0.3.0] - 2026-02-25
 

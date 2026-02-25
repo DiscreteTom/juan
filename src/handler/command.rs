@@ -440,7 +440,12 @@ pub async fn handle_command(
                 crate::utils::expand_path(&config.bridge.default_workspace)
             };
 
-            let full_path = std::path::Path::new(&workspace).join(file_path);
+            let full_path =
+                if file_path.starts_with('~') || std::path::Path::new(file_path).is_absolute() {
+                    std::path::PathBuf::from(crate::utils::expand_path(file_path))
+                } else {
+                    std::path::Path::new(&workspace).join(file_path)
+                };
 
             if full_path.is_dir() {
                 match std::fs::read_dir(&full_path) {
