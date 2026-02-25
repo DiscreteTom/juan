@@ -66,21 +66,30 @@ cargo install --git https://github.com/DiscreteTom/juan
    - Go to "App Home"
    - Under "Show Tabs", check "Allow users to send Slash commands and messages from the messages tab"
 
-## Usage
+## Getting Started
+
+Create a config file (juan.toml):
 
 ```bash
-# Create a config file (juan.toml)
 juan init
+```
 
-# Edit config file to set your Slack tokens
-# - Set bot_token (starts with xoxb-)
-# - Set app_token (starts with xapp-)
+Edit config file to set your Slack tokens:
 
-# Run with default config file (juan.toml)
+- Set bot_token (starts with `xoxb-`)
+- Set app_token (starts with `xapp-`)
+
+Run the bridge:
+
+```bash
 juan run
 ```
 
-## Interacting with Agents
+> [!TIP]
+> It's recommended to run Juan in tmux so it persists in the background:
+> ```bash
+> tmux new -s juan "juan run"
+> ```
 
 In your Slack, talk to the Slack APP. Use `#help` to see help.
 
