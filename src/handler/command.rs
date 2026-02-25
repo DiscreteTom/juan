@@ -619,12 +619,15 @@ pub async fn handle_command(
                                 ) => opts
                                     .iter()
                                     .map(|opt| {
-                                        let marker =
-                                            if opt.value == *current { "→" } else { " " };
+                                        let current_text = if opt.value == *current {
+                                            " (current)"
+                                        } else {
+                                            ""
+                                        };
                                         format!(
-                                            "{} `{}` - {}",
-                                            marker,
+                                            "- `{}`{} - {}",
                                             opt.value,
+                                            current_text,
                                             opt.description.as_deref().unwrap_or(&opt.name)
                                         )
                                     })
@@ -639,12 +642,15 @@ pub async fn handle_command(
                                             .options
                                             .iter()
                                             .map(|opt| {
-                                                let marker =
-                                                    if opt.value == *current { "→" } else { " " };
+                                                let current_text = if opt.value == *current {
+                                                    " (current)"
+                                                } else {
+                                                    ""
+                                                };
                                                 format!(
-                                                    "{} `{}` - {}",
-                                                    marker,
+                                                    "- `{}`{} - {}",
                                                     opt.value,
+                                                    current_text,
                                                     opt.description.as_deref().unwrap_or(&opt.name)
                                                 )
                                             })
@@ -680,11 +686,15 @@ pub async fn handle_command(
                         .available_modes
                         .iter()
                         .map(|mode| {
-                            let marker = if mode.id == *current { "→" } else { " " };
+                            let current_text = if mode.id == *current {
+                                " (current)"
+                            } else {
+                                ""
+                            };
                             format!(
-                                "{} `{}` - {}",
-                                marker,
+                                "- `{}`{} - {}",
                                 mode.id,
+                                current_text,
                                 mode.description.as_deref().unwrap_or(&mode.name)
                             )
                         })
@@ -834,12 +844,15 @@ pub async fn handle_command(
                                 ) => opts
                                     .iter()
                                     .map(|opt| {
-                                        let marker =
-                                            if opt.value == *current { "→" } else { " " };
+                                        let current_text = if opt.value == *current {
+                                            " (current)"
+                                        } else {
+                                            ""
+                                        };
                                         format!(
-                                            "{} `{}` - {}",
-                                            marker,
+                                            "- `{}`{} - {}",
                                             opt.value,
+                                            current_text,
                                             opt.description.as_deref().unwrap_or(&opt.name)
                                         )
                                     })
@@ -854,12 +867,15 @@ pub async fn handle_command(
                                             .options
                                             .iter()
                                             .map(|opt| {
-                                                let marker =
-                                                    if opt.value == *current { "→" } else { " " };
+                                                let current_text = if opt.value == *current {
+                                                    " (current)"
+                                                } else {
+                                                    ""
+                                                };
                                                 format!(
-                                                    "{} `{}` - {}",
-                                                    marker,
+                                                    "- `{}`{} - {}",
                                                     opt.value,
+                                                    current_text,
                                                     opt.description.as_deref().unwrap_or(&opt.name)
                                                 )
                                             })
@@ -895,15 +911,15 @@ pub async fn handle_command(
                         .available_models
                         .iter()
                         .map(|model| {
-                            let marker = if model.model_id == *current {
-                                "→"
+                            let current_text = if model.model_id == *current {
+                                " (current)"
                             } else {
-                                " "
+                                ""
                             };
                             format!(
-                                "{} `{}` - {}",
-                                marker,
+                                "- `{}`{} - {}",
                                 model.model_id,
+                                current_text,
                                 model.description.as_deref().unwrap_or(&model.name)
                             )
                         })
