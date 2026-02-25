@@ -100,28 +100,11 @@ pub async fn handle_command(
 
             let new_session_req = agent_client_protocol::NewSessionRequest::new(workspace_path);
 
-            let session_id = match agent_manager
+            let (session_id, config_options, modes) = match agent_manager
                 .new_session(agent_name, new_session_req, agent_config.auto_approve)
                 .await
             {
-                Ok(resp) => {
-                    // Store initial config options if provided
-                    if let Some(config_options) = resp.config_options.clone() {
-                        if let Err(e) = session_manager
-                            .update_config_options(ts, config_options)
-                            .await
-                        {
-                            debug!("Failed to store initial config options: {}", e);
-                        }
-                    }
-                    // Store deprecated modes if provided
-                    if let Some(modes) = resp.modes.clone() {
-                        if let Err(e) = session_manager.update_modes(ts, modes).await {
-                            debug!("Failed to store initial modes: {}", e);
-                        }
-                    }
-                    resp.session_id
-                }
+                Ok(resp) => (resp.session_id, resp.config_options, resp.modes),
                 Err(e) => {
                     let _ = slack.add_reaction(channel, ts, "x").await;
                     let _ = slack
@@ -151,6 +134,21 @@ pub async fn handle_command(
                 .await
             {
                 Ok(_) => {
+                    // Store initial config options if provided
+                    if let Some(config_options) = config_options {
+                        if let Err(e) = session_manager
+                            .update_config_options(ts, config_options)
+                            .await
+                        {
+                            debug!("Failed to store initial config options: {}", e);
+                        }
+                    }
+                    // Store deprecated modes if provided
+                    if let Some(modes) = modes {
+                        if let Err(e) = session_manager.update_modes(ts, modes).await {
+                            debug!("Failed to store initial modes: {}", e);
+                        }
+                    }
                     // Set default mode if configured
                     if let Some(default_mode) = &agent_config.default_mode {
                         debug!("Setting default mode: {}", default_mode);
