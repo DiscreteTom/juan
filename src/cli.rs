@@ -33,5 +33,9 @@ pub enum Command {
         /// Logging level (trace, debug, info, warn, error)
         #[arg(long, default_value = "info")]
         log_level: String,
+
+        /// Platforms to connect (comma-separated: slack,feishu). Defaults to all enabled in config.
+        #[arg(long)]
+        platforms: Option<String>,
     },
 }

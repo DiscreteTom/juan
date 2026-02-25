@@ -6,7 +6,170 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{debug, info, trace, warn};
 
-use crate::{agent, config, handler, session, slack};
+use crate::{agent, config, feishu, handler, session, slack};
+
+/// Unified event type for all platforms
+#[derive(Debug, Clone)]
+pub enum PlatformEvent {
+    Slack(slack::SlackEvent),
+    Feishu(feishu::FeishuEvent),
+}
+
+impl PlatformEvent {
+    pub fn channel(&self) -> &str {
+        match self {
+            PlatformEvent::Slack(e) => &e.channel,
+            PlatformEvent::Feishu(e) => &e.chat_id,
+        }
+    }
+
+    pub fn ts(&self) -> &str {
+        match self {
+            PlatformEvent::Slack(e) => &e.ts,
+            PlatformEvent::Feishu(e) => &e.message_id,
+        }
+    }
+
+    pub fn thread_ts(&self) -> Option<&str> {
+        match self {
+            PlatformEvent::Slack(e) => e.thread_ts.as_deref(),
+            PlatformEvent::Feishu(e) => e.parent_id.as_deref(),
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        match self {
+            PlatformEvent::Slack(e) => &e.text,
+            PlatformEvent::Feishu(e) => &e.text,
+        }
+    }
+
+    pub fn platform(&self) -> &str {
+        match self {
+            PlatformEvent::Slack(_) => "slack",
+            PlatformEvent::Feishu(_) => "feishu",
+        }
+    }
+}
+
+/// Unified connection type for all platforms
+#[derive(Clone)]
+pub enum PlatformConnection {
+    Slack(Arc<slack::SlackConnection>),
+    Feishu(Arc<feishu::FeishuConnection>),
+}
+
+impl PlatformConnection {
+    pub async fn send_message(
+        &self,
+        channel: &str,
+        thread_ts: Option<&str>,
+        text: &str,
+    ) -> Result<String> {
+        match self {
+            PlatformConnection::Slack(conn) => conn.send_message(channel, thread_ts, text).await,
+            PlatformConnection::Feishu(conn) => conn.send_message(channel, thread_ts, text).await,
+        }
+    }
+
+    pub async fn update_message(&self, channel: &str, ts: &str, text: &str) -> Result<()> {
+        match self {
+            PlatformConnection::Slack(conn) => conn.update_message(channel, ts, text).await,
+            PlatformConnection::Feishu(conn) => conn.update_message(ts, text).await,
+        }
+    }
+
+    pub async fn add_reaction(&self, channel: &str, ts: &str, emoji: &str) -> Result<()> {
+        match self {
+            PlatformConnection::Slack(conn) => conn.add_reaction(channel, ts, emoji).await,
+            PlatformConnection::Feishu(conn) => conn.add_reaction(ts, emoji).await,
+        }
+    }
+
+    pub async fn upload_file(
+        &self,
+        channel: &str,
+        thread_ts: Option<&str>,
+        content: &str,
+        filename: &str,
+        title: Option<&str>,
+    ) -> Result<()> {
+        match self {
+            PlatformConnection::Slack(conn) => {
+                conn.upload_file(channel, thread_ts, content, filename, title)
+                    .await
+            }
+            PlatformConnection::Feishu(conn) => {
+                conn.upload_file(channel, thread_ts, content, filename, title)
+                    .await
+            }
+        }
+    }
+
+    pub async fn send_message_with_blocks(
+        &self,
+        channel: &str,
+        thread_ts: Option<&str>,
+        text: &str,
+        blocks: Vec<Value>,
+    ) -> Result<String> {
+        match self {
+            PlatformConnection::Slack(conn) => {
+                conn.send_message_with_blocks(channel, thread_ts, text, blocks)
+                    .await
+            }
+            PlatformConnection::Feishu(conn) => {
+                conn.send_message_with_blocks(channel, thread_ts, text, blocks)
+                    .await
+            }
+        }
+    }
+
+    pub async fn update_message_with_blocks(
+        &self,
+        channel: &str,
+        ts: &str,
+        text: &str,
+        blocks: Vec<Value>,
+    ) -> Result<()> {
+        match self {
+            PlatformConnection::Slack(conn) => {
+                conn.update_message_with_blocks(channel, ts, text, blocks)
+                    .await
+            }
+            PlatformConnection::Feishu(conn) => {
+                conn.update_message_with_blocks(ts, text, blocks).await
+            }
+        }
+    }
+
+    pub async fn upload_binary_file(
+        &self,
+        channel: &str,
+        thread_ts: Option<&str>,
+        content: &[u8],
+        filename: &str,
+        title: Option<&str>,
+    ) -> Result<()> {
+        match self {
+            PlatformConnection::Slack(conn) => {
+                conn.upload_binary_file(channel, thread_ts, content, filename, title)
+                    .await
+            }
+            PlatformConnection::Feishu(conn) => {
+                conn.upload_binary_file(channel, thread_ts, content, filename, title)
+                    .await
+            }
+        }
+    }
+
+    pub async fn download_file(&self, url: &str) -> Result<Vec<u8>> {
+        match self {
+            PlatformConnection::Slack(conn) => conn.download_file(url).await,
+            PlatformConnection::Feishu(conn) => conn.download_file(url).await,
+        }
+    }
+}
 
 pub enum NotificationWrapper {
     Agent(agent_client_protocol::SessionNotification),
@@ -36,7 +199,7 @@ pub type PendingPermissions = Arc<
     >,
 >;
 
-pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
+pub async fn run_bridge(config: Arc<config::Config>, platforms: Option<String>) -> Result<()> {
     info!("Default workspace: {}", config.bridge.default_workspace);
     info!("Auto-approve: {}", config.bridge.auto_approve);
     info!("Configured agents: {}", config.agents.len());
@@ -47,6 +210,23 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
             agent.name, agent.command, agent.description
         );
     }
+
+    // Parse platforms filter
+    let enabled_platforms: Vec<String> = if let Some(p) = platforms {
+        p.split(',').map(|s| s.trim().to_lowercase()).collect()
+    } else {
+        // Default: all platforms with credentials
+        let mut all = vec![];
+        if config.slack.is_some() {
+            all.push("slack".to_string());
+        }
+        if config.feishu.is_some() {
+            all.push("feishu".to_string());
+        }
+        all
+    };
+
+    info!("Enabled platforms: {:?}", enabled_platforms);
 
     // Create channel for agent notifications (agent -> main loop)
     let (notification_tx, mut notification_rx) = mpsc::unbounded_channel();
@@ -60,12 +240,11 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     agent_manager.register_agents(config.agents.clone()).await;
     debug!("Agent manager initialized (agents will spawn on-demand)");
 
-    // Create session manager to track Slack thread -> agent session mappings
+    // Create session manager to track thread -> agent session mappings
     let session_manager = Arc::new(session::SessionManager::new(config.clone()));
     debug!("Session manager initialized");
 
-    // Create Slack client and event channel (Slack -> main loop)
-    let slack = Arc::new(slack::SlackConnection::new(config.slack.bot_token.clone()));
+    // Create unified event channel for all platforms
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
     // Create shared message buffers for accumulating chunks
@@ -78,8 +257,81 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     // Create shared map for tracking pending permission requests
     let pending_permissions: PendingPermissions = Arc::new(RwLock::new(HashMap::new()));
 
-    // Spawn task to handle agent notifications and forward to Slack
-    let slack_clone = slack.clone();
+    // Store platform connections
+    let mut platform_connections: Vec<PlatformConnection> = vec![];
+
+    // Connect to Slack if enabled
+    if enabled_platforms.contains(&"slack".to_string()) {
+        if let Some(slack_config) = &config.slack {
+            info!("Connecting to Slack...");
+            let slack = Arc::new(slack::SlackConnection::new(slack_config.bot_token.clone()));
+            platform_connections.push(PlatformConnection::Slack(slack.clone()));
+
+            let slack_event_tx = event_tx.clone();
+            let (slack_event_tx_internal, mut slack_event_rx_internal) = mpsc::unbounded_channel();
+            let app_token = slack_config.app_token.clone();
+
+            // Spawn Slack connection task
+            tokio::spawn(async move {
+                if let Err(e) = slack.connect(app_token, slack_event_tx_internal).await {
+                    tracing::error!("Slack connection error: {}", e);
+                }
+            });
+
+            // Forward Slack events to unified channel
+            tokio::spawn(async move {
+                while let Some(event) = slack_event_rx_internal.recv().await {
+                    let _ = slack_event_tx.send(PlatformEvent::Slack(event));
+                }
+            });
+        } else {
+            warn!("Slack enabled but no credentials configured");
+        }
+    }
+
+    // Connect to Feishu if enabled
+    if enabled_platforms.contains(&"feishu".to_string()) {
+        if let Some(feishu_config) = &config.feishu {
+            info!("Connecting to Feishu...");
+            let feishu = Arc::new(feishu::FeishuConnection::new(
+                feishu_config.app_id.clone(),
+                feishu_config.app_secret.clone(),
+            ));
+            platform_connections.push(PlatformConnection::Feishu(feishu.clone()));
+
+            let feishu_event_tx = event_tx.clone();
+            let (feishu_event_tx_internal, mut feishu_event_rx_internal) =
+                mpsc::unbounded_channel();
+
+            // Spawn Feishu connection task
+            tokio::spawn(async move {
+                if let Err(e) = feishu.connect(feishu_event_tx_internal).await {
+                    tracing::error!("Feishu connection error: {}", e);
+                }
+            });
+
+            // Forward Feishu events to unified channel
+            tokio::spawn(async move {
+                while let Some(event) = feishu_event_rx_internal.recv().await {
+                    let _ = feishu_event_tx.send(PlatformEvent::Feishu(event));
+                }
+            });
+        } else {
+            warn!("Feishu enabled but no credentials configured");
+        }
+    }
+
+    // Get the first platform connection for notification handler (temporary solution)
+    let primary_connection = platform_connections.first().cloned();
+
+    if primary_connection.is_none() {
+        anyhow::bail!("No platform connections available");
+    }
+
+    let primary_connection = primary_connection.unwrap();
+
+    // Spawn task to handle agent notifications and forward to platforms
+    let connection_clone = primary_connection.clone();
     let session_manager_clone = session_manager.clone();
     let buffers_clone = message_buffers.clone();
     let thought_buffers_clone = thought_buffers.clone();
@@ -96,7 +348,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                         flush_message_buffer(
                             &buffers_clone,
                             &session_id,
-                            &slack_clone,
+                            &connection_clone,
                             &session.channel,
                             &thread_key,
                         )
@@ -104,7 +356,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                         flush_thought_buffer(
                             &thought_buffers_clone,
                             &session_id,
-                            &slack_clone,
+                            &connection_clone,
                             &session.channel,
                             &thread_key,
                         )
@@ -114,7 +366,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                 NotificationWrapper::Agent(notification) => {
                     trace!("Received notification: session={}", notification.session_id);
 
-                    // Find the Slack thread for this session
+                    // Find the thread for this session
                     let session_info = session_manager_clone
                         .find_by_session_id(&notification.session_id)
                         .await;
@@ -134,7 +386,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             flush_message_buffer(
                                 &buffers_clone,
                                 &notification.session_id,
-                                &slack_clone,
+                                &connection_clone,
                                 &session.channel,
                                 &thread_key,
                             )
@@ -148,7 +400,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             flush_thought_buffer(
                                 &thought_buffers_clone,
                                 &notification.session_id,
-                                &slack_clone,
+                                &connection_clone,
                                 &session.channel,
                                 &thread_key,
                             )
@@ -168,7 +420,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                             .push_str(&text.text);
                                     }
                                     agent_client_protocol::ContentBlock::Image(image) => {
-                                        // Decode base64 image and upload to Slack
+                                        // Decode base64 image and upload
                                         match base64::Engine::decode(
                                             &base64::engine::general_purpose::STANDARD,
                                             &image.data,
@@ -180,20 +432,42 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                                     .last()
                                                     .unwrap_or("png");
                                                 let filename = format!("image.{}", ext);
-                                                if let Err(e) = slack_clone
-                                                    .upload_binary_file(
-                                                        &session.channel,
-                                                        Some(&thread_key),
-                                                        &bytes,
-                                                        &filename,
-                                                        Some("Agent Image"),
-                                                    )
-                                                    .await
-                                                {
-                                                    tracing::error!(
-                                                        "Failed to upload image: {}",
-                                                        e
-                                                    );
+                                                // TODO: implement upload_binary_file for PlatformConnection
+                                                match &connection_clone {
+                                                    PlatformConnection::Slack(slack) => {
+                                                        if let Err(e) = slack
+                                                            .upload_binary_file(
+                                                                &session.channel,
+                                                                Some(&thread_key),
+                                                                &bytes,
+                                                                &filename,
+                                                                Some("Agent Image"),
+                                                            )
+                                                            .await
+                                                        {
+                                                            tracing::error!(
+                                                                "Failed to upload image: {}",
+                                                                e
+                                                            );
+                                                        }
+                                                    }
+                                                    PlatformConnection::Feishu(feishu) => {
+                                                        if let Err(e) = feishu
+                                                            .upload_binary_file(
+                                                                &session.channel,
+                                                                Some(&thread_key),
+                                                                &bytes,
+                                                                &filename,
+                                                                Some("Agent Image"),
+                                                            )
+                                                            .await
+                                                        {
+                                                            tracing::error!(
+                                                                "Failed to upload image: {}",
+                                                                e
+                                                            );
+                                                        }
+                                                    }
                                                 }
                                             }
                                             Err(e) => {
@@ -245,7 +519,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                             agent_client_protocol::SessionUpdate::Plan(plan) => {
                                 if !plan.entries.is_empty() {
                                     if let Err(e) = send_plan_message(
-                                        &slack_clone,
+                                        &connection_clone,
                                         &session.channel,
                                         &thread_key,
                                         &plan.entries,
@@ -282,8 +556,9 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                         // Update message text only if title changed and not empty
                                         if title_changed && !tool_call.title.is_empty() {
                                             let msg = format!("🔧 Tool: {}", tool_call.title);
-                                            let _ =
-                                                slack_clone.update_message(channel, ts, &msg).await;
+                                            let _ = connection_clone
+                                                .update_message(channel, ts, &msg)
+                                                .await;
                                         }
 
                                         // Update stored tool call
@@ -299,7 +574,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                         // New tool call - need to send message and upload everything
                                         drop(tool_messages);
                                         let msg = format!("🔧 Tool: {}", tool_call.title);
-                                        match slack_clone
+                                        match connection_clone
                                             .send_message(&session.channel, Some(&thread_key), &msg)
                                             .await
                                         {
@@ -324,7 +599,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
                                 // Upload files only if they changed
                                 upload_tool_call_files(
-                                    &slack_clone,
+                                    &connection_clone,
                                     &channel,
                                     &msg_ts,
                                     tool_call.raw_input.as_ref(),
@@ -359,7 +634,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                             if !title.is_empty() && title != &stored_tool_call.title
                                             {
                                                 let msg = format!("🔧 Tool: {}", title);
-                                                let _ = slack_clone
+                                                let _ = connection_clone
                                                     .update_message(&channel, &ts, &msg)
                                                     .await;
                                                 stored_tool_call.title = title.clone();
@@ -404,7 +679,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
                                 // Upload files if needed (without holding lock)
                                 upload_tool_call_files(
-                                    &slack_clone,
+                                    &connection_clone,
                                     &channel,
                                     &ts,
                                     update.fields.raw_input.as_ref(),
@@ -423,7 +698,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                         agent_client_protocol::ToolCallStatus::Failed => Some("❌"),
                                         _ => None,
                                     } {
-                                        // Remove from tracking and update the Slack message
+                                        // Remove from tracking and update the message
                                         if let Some((channel, ts, tool_call)) =
                                             tool_messages_clone.write().await.remove(&tool_call_id)
                                         {
@@ -432,7 +707,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                                 status_emoji, tool_call.title
                                             );
 
-                                            let _ = slack_clone
+                                            let _ = connection_clone
                                                 .update_message(&channel, &ts, &msg)
                                                 .await;
                                         }
@@ -448,7 +723,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
     });
 
     // Spawn task to handle permission requests from agents
-    let slack_clone = slack.clone();
+    let connection_clone2 = primary_connection.clone();
     let session_manager_clone = session_manager.clone();
     let pending_permissions_clone = pending_permissions.clone();
     tokio::spawn(async move {
@@ -460,7 +735,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                 permission_req.session_id
             );
 
-            // Find the Slack thread for this session
+            // Find the thread for this session
             let session_info = session_manager_clone
                 .find_by_session_id(&permission_req.session_id)
                 .await;
@@ -480,7 +755,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                     options_text
                 );
 
-                if let Err(e) = slack_clone
+                if let Err(e) = connection_clone2
                     .send_message(&session.channel, Some(&thread_key), &msg)
                     .await
                 {
@@ -509,17 +784,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
         }
     });
 
-    // Spawn task to connect to Slack and forward events to main loop
-    let slack_clone = slack.clone();
-    let app_token = config.slack.app_token.clone();
-    tokio::spawn(async move {
-        debug!("Connecting to Slack...");
-        if let Err(e) = slack_clone.connect(app_token, event_tx).await {
-            tracing::error!("Slack connection error: {}", e);
-        }
-    });
-
-    // Main event loop: process Slack events
+    // Main event loop: process platform events
     debug!("Entering main event loop");
     loop {
         tokio::select! {
@@ -530,7 +795,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
             Some(event) = event_rx.recv() => {
                 debug!("Processing event from main loop");
                 // Spawn a new task for each event to prevent blocking
-                let slack = slack.clone();
+                let connection = primary_connection.clone();
                 let config = config.clone();
                 let agent_manager = agent_manager.clone();
                 let session_manager = session_manager.clone();
@@ -540,7 +805,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                 tokio::spawn(async move {
                     handler::handle_event(
                         event,
-                        slack,
+                        connection,
                         config,
                         agent_manager,
                         session_manager,
@@ -557,7 +822,7 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 }
 
 async fn upload_yaml_input(
-    slack: &slack::SlackConnection,
+    connection: &PlatformConnection,
     channel: &str,
     thread_ts: &str,
     raw_input: Option<&serde_json::Value>,
@@ -565,7 +830,7 @@ async fn upload_yaml_input(
     if let Some(yaml_content) = raw_input.and_then(|v| serde_yaml_ng::to_string(v).ok()) {
         let trimmed = yaml_content.trim();
         if !trimmed.is_empty() && trimmed != "{}" {
-            if let Err(e) = slack
+            if let Err(e) = connection
                 .upload_file(
                     channel,
                     Some(thread_ts),
@@ -582,7 +847,7 @@ async fn upload_yaml_input(
 }
 
 async fn upload_tool_call_content(
-    slack: &slack::SlackConnection,
+    connection: &PlatformConnection,
     channel: &str,
     thread_ts: &str,
     content: &[agent_client_protocol::ToolCallContent],
@@ -606,7 +871,7 @@ async fn upload_tool_call_content(
                         .and_then(|n| n.to_str())
                         .unwrap_or("file")
                 );
-                if let Err(e) = slack
+                if let Err(e) = connection
                     .upload_file(
                         channel,
                         Some(thread_ts),
@@ -621,7 +886,7 @@ async fn upload_tool_call_content(
             }
             agent_client_protocol::ToolCallContent::Content(content) => {
                 if let agent_client_protocol::ContentBlock::Text(text) = &content.content {
-                    if let Err(e) = slack
+                    if let Err(e) = connection
                         .upload_file(
                             channel,
                             Some(thread_ts),
@@ -652,14 +917,16 @@ fn generate_unified_diff(old_text: &str, new_text: &str) -> String {
 async fn flush_message_buffer(
     buffers: &MessageBuffers,
     session_id: &SessionId,
-    slack: &slack::SlackConnection,
+    connection: &PlatformConnection,
     channel: &str,
     thread_key: &str,
 ) {
     if let Some(buffer) = buffers.write().await.remove(session_id) {
         if !buffer.is_empty() {
             debug!("Flushing {} chars from message buffer", buffer.len());
-            let _ = slack.send_message(channel, Some(thread_key), &buffer).await;
+            let _ = connection
+                .send_message(channel, Some(thread_key), &buffer)
+                .await;
         }
     }
 }
@@ -667,14 +934,14 @@ async fn flush_message_buffer(
 async fn flush_thought_buffer(
     buffers: &ThoughtBuffers,
     session_id: &SessionId,
-    slack: &slack::SlackConnection,
+    connection: &PlatformConnection,
     channel: &str,
     thread_key: &str,
 ) {
     if let Some(buffer) = buffers.write().await.remove(session_id) {
         if !buffer.is_empty() {
             debug!("Flushing {} chars from thought buffer", buffer.len());
-            let _ = slack
+            let _ = connection
                 .send_message(channel, Some(thread_key), &format_thought_message(&buffer))
                 .await;
         }
@@ -755,7 +1022,7 @@ fn format_plan_message(entries: &[agent_client_protocol::PlanEntry]) -> String {
 
 /// Upload tool call files if they changed
 async fn upload_tool_call_files(
-    slack: &Arc<slack::SlackConnection>,
+    connection: &PlatformConnection,
     channel: &str,
     ts: &str,
     raw_input: Option<&serde_json::Value>,
@@ -764,15 +1031,15 @@ async fn upload_tool_call_files(
     needs_content: bool,
 ) {
     if needs_raw_input {
-        upload_yaml_input(slack, channel, ts, raw_input).await;
+        upload_yaml_input(connection, channel, ts, raw_input).await;
     }
     if needs_content {
-        upload_tool_call_content(slack, channel, ts, content).await;
+        upload_tool_call_content(connection, channel, ts, content).await;
     }
 }
 
 async fn send_plan_message(
-    slack: &Arc<slack::SlackConnection>,
+    connection: &PlatformConnection,
     channel: &str,
     thread_key: &str,
     entries: &[agent_client_protocol::PlanEntry],
@@ -780,7 +1047,7 @@ async fn send_plan_message(
     let fallback_text = format_plan_message(entries);
     let plan_block = build_plan_block_payload(entries);
 
-    match slack
+    match connection
         .send_message_with_blocks(channel, Some(thread_key), &fallback_text, vec![plan_block])
         .await
     {
@@ -790,7 +1057,7 @@ async fn send_plan_message(
                 "Failed to send plan block message, falling back to text message: {}",
                 e
             );
-            slack
+            connection
                 .send_message(channel, Some(thread_key), &fallback_text)
                 .await?;
             Ok(())

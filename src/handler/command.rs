@@ -1,22 +1,22 @@
-use crate::{agent, config, session, slack};
+use crate::{agent, bridge::PlatformConnection, config, session};
 use std::sync::Arc;
 use tracing::debug;
 
 const HELP_MESSAGE: &str = "Available commands:
-- `#new &lt;agent&gt; [workspace]` - Start a new agent session
+- `#new <agent> [workspace]` - Start a new agent session
 - `#agents` - List available agents
 - `#mode` - Show available modes and current mode
-- `#mode &lt;value&gt;` - Switch to a different mode
+- `#mode <value>` - Switch to a different mode
 - `#model` - Show available models and current model
-- `#model &lt;value&gt;` - Switch to a different model
+- `#model <value>` - Switch to a different model
 - `#cancel` - Cancel ongoing agent operation
 - `#end` - End current agent session
-- `#read &lt;file_path&gt;` - Read local file content
+- `#read <file_path>` - Read local file content
 - `#diff [args]` - Show git diff
 - `#session` - Show current agent session info
 - `#sessions` - Show all active sessions
 - `#help` - Show this help message
-- `!&lt;command&gt;` - Execute shell command";
+- `!<command>` - Execute shell command";
 
 /// Handles bot commands (messages starting with #).
 pub async fn handle_command(
@@ -24,7 +24,7 @@ pub async fn handle_command(
     channel: &str,
     ts: &str,
     thread_ts: Option<&str>,
-    slack: Arc<slack::SlackConnection>,
+    connection: PlatformConnection,
     config: Arc<config::Config>,
     agent_manager: Arc<agent::AgentManager>,
     session_manager: Arc<session::SessionManager>,
@@ -37,7 +37,7 @@ pub async fn handle_command(
             debug!("Processing #new command: parts={:?}", parts);
             // Can only create sessions in main channel, not in existing threads
             if thread_ts.is_some() {
-                let _ = slack
+                let _ = connection
                     .send_message(
                         channel,
                         thread_ts,
@@ -48,7 +48,7 @@ pub async fn handle_command(
             }
 
             if parts.len() < 2 {
-                let _ = slack
+                let _ = connection
                     .send_message(
                         channel,
                         Some(ts),
@@ -66,8 +66,8 @@ pub async fn handle_command(
             let agent_config = match agent_config {
                 Some(cfg) => cfg,
                 None => {
-                    let _ = slack.add_reaction(channel, ts, "x").await;
-                    let _ = slack
+                    let _ = connection.add_reaction(channel, ts, "x").await;
+                    let _ = connection
                         .send_message(
                             channel,
                             Some(ts),
@@ -87,8 +87,8 @@ pub async fn handle_command(
 
             // Validate workspace exists
             if !std::path::Path::new(&workspace_path).is_dir() {
-                let _ = slack.add_reaction(channel, ts, "x").await;
-                let _ = slack
+                let _ = connection.add_reaction(channel, ts, "x").await;
+                let _ = connection
                     .send_message(
                         channel,
                         Some(ts),
@@ -118,8 +118,8 @@ pub async fn handle_command(
                 }
 
                 Err(e) => {
-                    let _ = slack.add_reaction(channel, ts, "x").await;
-                    let _ = slack
+                    let _ = connection.add_reaction(channel, ts, "x").await;
+                    let _ = connection
                         .send_message(
                             channel,
                             Some(ts),
@@ -256,11 +256,11 @@ pub async fn handle_command(
                         HELP_MESSAGE
                     ));
 
-                    let _ = slack.send_message(channel, Some(ts), &msg).await;
+                    let _ = connection.send_message(channel, Some(ts), &msg).await;
                 }
                 Err(e) => {
-                    let _ = slack.add_reaction(channel, ts, "x").await;
-                    let _ = slack
+                    let _ = connection.add_reaction(channel, ts, "x").await;
+                    let _ = connection
                         .send_message(
                             channel,
                             Some(ts),
@@ -278,13 +278,13 @@ pub async fn handle_command(
                 .map(|a| format!("• {} - {}", a.name, a.description))
                 .collect();
             let msg = format!("Available agents:\n{}", agent_list.join("\n"));
-            let _ = slack.send_message(channel, thread_ts, &msg).await;
+            let _ = connection.send_message(channel, thread_ts, &msg).await;
         }
         "#session" => {
             debug!("Processing #session command in thread_ts={:?}", thread_ts);
             // Show current session info (only works in threads)
             if thread_ts.is_none() {
-                let _ = slack
+                let _ = connection
                     .send_message(
                         channel,
                         None,
@@ -301,9 +301,9 @@ pub async fn handle_command(
                     "Current session:\n• Agent: {}\n• Workspace: {}\n• Auto-approve: {}\n• Status: {}",
                     session.agent_name, session.workspace, session.auto_approve, status
                 );
-                let _ = slack.send_message(channel, thread_ts, &msg).await;
+                let _ = connection.send_message(channel, thread_ts, &msg).await;
             } else {
-                let _ = slack
+                let _ = connection
                     .send_message(channel, thread_ts, "No active session in this thread.")
                     .await;
             }
@@ -313,7 +313,7 @@ pub async fn handle_command(
             let sessions_lock = session_manager.sessions();
             let sessions = sessions_lock.read().await;
             if sessions.is_empty() {
-                let _ = slack
+                let _ = connection
                     .send_message(channel, thread_ts, "No active sessions.")
                     .await;
             } else {
@@ -332,14 +332,14 @@ pub async fn handle_command(
                     sessions.len(),
                     session_list.join("\n")
                 );
-                let _ = slack.send_message(channel, thread_ts, &msg).await;
+                let _ = connection.send_message(channel, thread_ts, &msg).await;
             }
         }
         "#end" => {
             debug!("Processing #end command in thread_ts={:?}", thread_ts);
             // End current session (only works in threads)
             if thread_ts.is_none() {
-                let _ = slack
+                let _ = connection
                     .send_message(
                         channel,
                         None,
@@ -361,16 +361,16 @@ pub async fn handle_command(
                 Ok(_) => {
                     // Add reaction to user's #new message to mark as ended
                     if let Some(session) = session {
-                        let _ = slack
+                        let _ = connection
                             .add_reaction(&session.channel, &session.initial_ts, "white_check_mark")
                             .await;
                     }
-                    let _ = slack
+                    let _ = connection
                         .send_message(channel, thread_ts, "Session ended.")
                         .await;
                 }
                 Err(e) => {
-                    let _ = slack
+                    let _ = connection
                         .send_message(channel, thread_ts, &format!("Error: {}", e))
                         .await;
                 }
@@ -379,7 +379,7 @@ pub async fn handle_command(
         "#cancel" => {
             debug!("Processing #cancel command in thread_ts={:?}", thread_ts);
             if thread_ts.is_none() {
-                let _ = slack
+                let _ = connection
                     .send_message(
                         channel,
                         None,
@@ -392,7 +392,7 @@ pub async fn handle_command(
             let thread_key = thread_ts.unwrap();
             if let Some(session) = session_manager.get_session(thread_key).await {
                 if !session.busy {
-                    let _ = slack
+                    let _ = connection
                         .send_message(channel, thread_ts, "No ongoing operation to cancel.")
                         .await;
                     return;
@@ -401,18 +401,18 @@ pub async fn handle_command(
                 match agent_manager.cancel(&session.session_id).await {
                     Ok(_) => {
                         let _ = session_manager.set_busy(thread_key, false).await;
-                        let _ = slack
+                        let _ = connection
                             .send_message(channel, thread_ts, "Operation cancelled.")
                             .await;
                     }
                     Err(e) => {
-                        let _ = slack
+                        let _ = connection
                             .send_message(channel, thread_ts, &format!("Error: {}", e))
                             .await;
                     }
                 }
             } else {
-                let _ = slack
+                let _ = connection
                     .send_message(channel, thread_ts, "No active session in this thread.")
                     .await;
             }
@@ -421,7 +421,7 @@ pub async fn handle_command(
             debug!("Processing #read command in thread_ts={:?}", thread_ts);
 
             if parts.len() < 2 {
-                let _ = slack
+                let _ = connection
                     .send_message(channel, thread_ts, "Usage: #read <file_path>")
                     .await;
                 return;
@@ -465,10 +465,10 @@ pub async fn handle_command(
                         let list = files.join("\n");
                         let ticks = crate::utils::safe_backticks(&list);
                         let msg = format!("{}:\n{}\n{}\n{}", file_path, ticks, list, ticks);
-                        let _ = slack.send_message(channel, thread_ts, &msg).await;
+                        let _ = connection.send_message(channel, thread_ts, &msg).await;
                     }
                     Err(e) => {
-                        let _ = slack
+                        let _ = connection
                             .send_message(
                                 channel,
                                 thread_ts,
@@ -495,13 +495,13 @@ pub async fn handle_command(
                     match std::fs::read(&full_path) {
                         Ok(bytes) => {
                             let msg = format!("🖼️ Image: {}", file_path);
-                            match slack.send_message(channel, thread_ts, &msg).await {
+                            match connection.send_message(channel, thread_ts, &msg).await {
                                 Ok(ts) => {
                                     let filename = full_path
                                         .file_name()
                                         .and_then(|n| n.to_str())
                                         .unwrap_or(file_path);
-                                    let _ = slack
+                                    let _ = connection
                                         .upload_binary_file(
                                             channel,
                                             Some(&ts),
@@ -517,7 +517,7 @@ pub async fn handle_command(
                             }
                         }
                         Err(e) => {
-                            let _ = slack
+                            let _ = connection
                                 .send_message(
                                     channel,
                                     thread_ts,
@@ -531,9 +531,9 @@ pub async fn handle_command(
                     match std::fs::read_to_string(&full_path) {
                         Ok(content) => {
                             let msg = format!("📄 File: {}", file_path);
-                            match slack.send_message(channel, thread_ts, &msg).await {
+                            match connection.send_message(channel, thread_ts, &msg).await {
                                 Ok(ts) => {
-                                    let _ = slack
+                                    let _ = connection
                                         .upload_file(
                                             channel,
                                             Some(&ts),
@@ -549,7 +549,7 @@ pub async fn handle_command(
                             }
                         }
                         Err(e) => {
-                            let _ = slack
+                            let _ = connection
                                 .send_message(
                                     channel,
                                     thread_ts,
@@ -565,7 +565,7 @@ pub async fn handle_command(
             debug!("Processing #diff command in thread_ts={:?}", thread_ts);
             // Show git diff (only works in threads)
             if thread_ts.is_none() {
-                let _ = slack
+                let _ = connection
                     .send_message(
                         channel,
                         None,
@@ -578,7 +578,7 @@ pub async fn handle_command(
             let thread_key = thread_ts.unwrap();
             let session = session_manager.get_session(thread_key).await;
             if session.is_none() {
-                let _ = slack
+                let _ = connection
                     .send_message(channel, thread_ts, "No active session in this thread.")
                     .await;
                 return;
@@ -598,7 +598,7 @@ pub async fn handle_command(
                 Ok(output) => {
                     let diff = String::from_utf8_lossy(&output.stdout).trim().to_string();
                     if diff.is_empty() {
-                        let _ = slack
+                        let _ = connection
                             .send_message(channel, thread_ts, "No changes to show.")
                             .await;
                     } else {
@@ -613,9 +613,9 @@ pub async fn handle_command(
                             )
                         };
 
-                        match slack.send_message(channel, thread_ts, &msg).await {
+                        match connection.send_message(channel, thread_ts, &msg).await {
                             Ok(ts) => {
-                                let _ = slack
+                                let _ = connection
                                     .upload_file(channel, Some(&ts), &diff, &filename, Some("Diff"))
                                     .await;
                             }
@@ -626,7 +626,7 @@ pub async fn handle_command(
                     }
                 }
                 Err(e) => {
-                    let _ = slack
+                    let _ = connection
                         .send_message(
                             channel,
                             thread_ts,
@@ -639,7 +639,7 @@ pub async fn handle_command(
         "#mode" => {
             debug!("Processing #mode command in thread_ts={:?}", thread_ts);
             if thread_ts.is_none() {
-                let _ = slack
+                let _ = connection
                     .send_message(
                         channel,
                         None,
@@ -652,7 +652,7 @@ pub async fn handle_command(
             let thread_key = thread_ts.unwrap();
             let session = session_manager.get_session(thread_key).await;
             if session.is_none() {
-                let _ = slack
+                let _ = connection
                     .send_message(channel, thread_ts, "No active session in this thread.")
                     .await;
                 return;
@@ -723,7 +723,7 @@ pub async fn handle_command(
                                 _ => String::from("Unknown option format"),
                             };
                             let msg = format!("Available modes:\n{}", options);
-                            let _ = slack.send_message(channel, thread_ts, &msg).await;
+                            let _ = connection.send_message(channel, thread_ts, &msg).await;
                             true
                         } else {
                             false
@@ -761,9 +761,9 @@ pub async fn handle_command(
                         .collect::<Vec<_>>()
                         .join("\n");
                     let msg = format!("Available modes:\n{}", options);
-                    let _ = slack.send_message(channel, thread_ts, &msg).await;
+                    let _ = connection.send_message(channel, thread_ts, &msg).await;
                 } else {
-                    let _ = slack
+                    let _ = connection
                         .send_message(channel, thread_ts, "No mode configuration available.")
                         .await;
                 }
@@ -796,7 +796,7 @@ pub async fn handle_command(
                                 .await
                             {
                                 Ok(_) => {
-                                    let _ = slack
+                                    let _ = connection
                                         .send_message(
                                             channel,
                                             thread_ts,
@@ -832,7 +832,7 @@ pub async fn handle_command(
                     );
                     match agent_manager.set_mode(&session.session_id, req).await {
                         Ok(_) => {
-                            let _ = slack
+                            let _ = connection
                                 .send_message(
                                     channel,
                                     thread_ts,
@@ -841,7 +841,7 @@ pub async fn handle_command(
                                 .await;
                         }
                         Err(e) => {
-                            let _ = slack
+                            let _ = connection
                                 .send_message(
                                     channel,
                                     thread_ts,
@@ -851,7 +851,7 @@ pub async fn handle_command(
                         }
                     }
                 } else {
-                    let _ = slack
+                    let _ = connection
                         .send_message(
                             channel,
                             thread_ts,
@@ -864,7 +864,7 @@ pub async fn handle_command(
         "#model" => {
             debug!("Processing #model command in thread_ts={:?}", thread_ts);
             if thread_ts.is_none() {
-                let _ = slack
+                let _ = connection
                     .send_message(
                         channel,
                         None,
@@ -877,7 +877,7 @@ pub async fn handle_command(
             let thread_key = thread_ts.unwrap();
             let session = session_manager.get_session(thread_key).await;
             if session.is_none() {
-                let _ = slack
+                let _ = connection
                     .send_message(channel, thread_ts, "No active session in this thread.")
                     .await;
                 return;
@@ -948,7 +948,7 @@ pub async fn handle_command(
                                 _ => String::from("Unknown option format"),
                             };
                             let msg = format!("Available models:\n{}", options);
-                            let _ = slack.send_message(channel, thread_ts, &msg).await;
+                            let _ = connection.send_message(channel, thread_ts, &msg).await;
                             true
                         } else {
                             false
@@ -986,9 +986,9 @@ pub async fn handle_command(
                         .collect::<Vec<_>>()
                         .join("\n");
                     let msg = format!("Available models:\n{}", options);
-                    let _ = slack.send_message(channel, thread_ts, &msg).await;
+                    let _ = connection.send_message(channel, thread_ts, &msg).await;
                 } else {
-                    let _ = slack
+                    let _ = connection
                         .send_message(channel, thread_ts, "No model configuration available.")
                         .await;
                 }
@@ -1021,7 +1021,7 @@ pub async fn handle_command(
                                 .await
                             {
                                 Ok(_) => {
-                                    let _ = slack
+                                    let _ = connection
                                         .send_message(
                                             channel,
                                             thread_ts,
@@ -1057,7 +1057,7 @@ pub async fn handle_command(
                     );
                     match agent_manager.set_model(&session.session_id, req).await {
                         Ok(_) => {
-                            let _ = slack
+                            let _ = connection
                                 .send_message(
                                     channel,
                                     thread_ts,
@@ -1066,7 +1066,7 @@ pub async fn handle_command(
                                 .await;
                         }
                         Err(e) => {
-                            let _ = slack
+                            let _ = connection
                                 .send_message(
                                     channel,
                                     thread_ts,
@@ -1076,7 +1076,7 @@ pub async fn handle_command(
                         }
                     }
                 } else {
-                    let _ = slack
+                    let _ = connection
                         .send_message(
                             channel,
                             thread_ts,
@@ -1087,7 +1087,9 @@ pub async fn handle_command(
             }
         }
         "#help" | _ => {
-            let _ = slack.send_message(channel, thread_ts, HELP_MESSAGE).await;
+            let _ = connection
+                .send_message(channel, thread_ts, HELP_MESSAGE)
+                .await;
         }
     }
 }

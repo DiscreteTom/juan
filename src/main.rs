@@ -10,6 +10,7 @@ mod agent;
 mod bridge;
 mod cli;
 mod config;
+mod feishu;
 mod handler;
 mod session;
 mod slack;
@@ -30,7 +31,11 @@ async fn main() -> Result<()> {
         cli::Command::Init { config, r#override } => {
             return config::Config::init(&config, r#override);
         }
-        cli::Command::Run { config, log_level } => {
+        cli::Command::Run {
+            config,
+            log_level,
+            platforms,
+        } => {
             // Initialize logging with the specified level
             tracing_subscriber::fmt().with_env_filter(log_level).init();
 
@@ -38,7 +43,7 @@ async fn main() -> Result<()> {
             let config = Arc::new(config::Config::load(&config)?);
 
             info!("Configuration loaded successfully");
-            run_bridge(config).await?;
+            run_bridge(config, platforms).await?;
         }
     }
 

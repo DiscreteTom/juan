@@ -1,4 +1,5 @@
-use crate::{agent, bridge, session, slack};
+use crate::{agent, bridge, session};
+use slack_morphism::prelude::SlackFile;
 use std::sync::Arc;
 use tracing::{debug, trace};
 
@@ -7,13 +8,13 @@ use tracing::{debug, trace};
 /// Flow:
 /// 1. Check if thread has an active session
 /// 2. Send prompt to agent via ACP
-/// 3. Update Slack with response
+/// 3. Update with response
 pub async fn handle_message(
     text: &str,
-    files: &[slack_morphism::prelude::SlackFile],
+    files: &[SlackFile],
     channel: &str,
     thread_ts: Option<&str>,
-    slack: Arc<slack::SlackConnection>,
+    connection: bridge::PlatformConnection,
     agent_manager: Arc<agent::AgentManager>,
     session_manager: Arc<session::SessionManager>,
     notification_tx: tokio::sync::mpsc::UnboundedSender<bridge::NotificationWrapper>,
@@ -30,7 +31,7 @@ pub async fn handle_message(
     let session = match session_manager.get_session(thread_key).await {
         Some(s) => s,
         None => {
-            let _ = slack
+            let _ = connection
                 .send_message(channel, thread_ts, "No active session. Use #help for help.")
                 .await;
             return;
@@ -39,7 +40,7 @@ pub async fn handle_message(
 
     // Check if session is busy
     if session.busy {
-        let _ = slack
+        let _ = connection
             .send_message(
                 channel,
                 thread_ts,
@@ -70,7 +71,7 @@ pub async fn handle_message(
         if let Some(mimetype) = &file.mimetype {
             if mimetype.0.starts_with("image/") {
                 if let Some(url) = &file.url_private_download {
-                    match slack.download_file(url.as_str()).await {
+                    match connection.download_file(url.as_str()).await {
                         Ok(bytes) => {
                             let base64_data = base64::Engine::encode(
                                 &base64::engine::general_purpose::STANDARD,
@@ -99,7 +100,7 @@ pub async fn handle_message(
     // We don't wait for completion to avoid blocking the event loop
     let agent_manager_clone = agent_manager.clone();
     let session_manager_clone = session_manager.clone();
-    let slack_clone = slack.clone();
+    let slack_clone = connection.clone();
     let channel = channel.to_string();
     let thread_ts = thread_ts.map(|s| s.to_string());
     let thread_key = thread_key.to_string();

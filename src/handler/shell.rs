@@ -1,15 +1,15 @@
-use crate::{config, session, slack};
+use crate::{bridge::PlatformConnection, config, session};
 use std::sync::Arc;
 use tokio::process::Command;
 use tracing::debug;
 
 /// Handles shell commands (messages starting with !).
-/// Executes the command locally and sends output back to Slack.
+/// Executes the command locally and sends output back.
 pub async fn handle_shell_command(
     text: &str,
     channel: &str,
     thread_ts: Option<&str>,
-    slack: Arc<slack::SlackConnection>,
+    connection: PlatformConnection,
     config: Arc<config::Config>,
     session_manager: Arc<session::SessionManager>,
 ) {
@@ -17,7 +17,7 @@ pub async fn handle_shell_command(
     debug!("Executing shell command: {}", cmd);
 
     if cmd.is_empty() {
-        let _ = slack
+        let _ = connection
             .send_message(channel, thread_ts, "Usage: !<command>")
             .await;
         return;
@@ -80,5 +80,5 @@ pub async fn handle_shell_command(
         Err(e) => format!("Failed to execute command: {}", e),
     };
 
-    let _ = slack.send_message(channel, thread_ts, &response).await;
+    let _ = connection.send_message(channel, thread_ts, &response).await;
 }

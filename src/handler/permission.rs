@@ -1,11 +1,11 @@
-use crate::slack;
+use crate::bridge::PlatformConnection;
 use tracing::debug;
 
 pub async fn handle_permission_response(
     text: &str,
     options: Vec<agent_client_protocol::PermissionOption>,
     response_tx: tokio::sync::oneshot::Sender<Option<String>>,
-    slack: &slack::SlackConnection,
+    connection: &PlatformConnection,
     channel: &str,
     thread_key: &str,
 ) {
@@ -13,7 +13,7 @@ pub async fn handle_permission_response(
     let text = text.trim();
 
     if text.eq_ignore_ascii_case("deny") {
-        let _ = slack
+        let _ = connection
             .send_message(channel, Some(thread_key), "❌ Permission denied")
             .await;
         let _ = response_tx.send(None);
@@ -24,7 +24,7 @@ pub async fn handle_permission_response(
     if let Ok(choice) = text.parse::<usize>() {
         if choice > 0 && choice <= options.len() {
             let selected = &options[choice - 1];
-            let _ = slack
+            let _ = connection
                 .send_message(
                     channel,
                     Some(thread_key),
@@ -36,7 +36,7 @@ pub async fn handle_permission_response(
         }
     }
 
-    let _ = slack
+    let _ = connection
         .send_message(
             channel,
             Some(thread_key),

@@ -5,23 +5,23 @@ mod shell;
 
 use crate::{
     agent::AgentManager,
-    bridge::PendingPermissions,
+    bridge::{PendingPermissions, PlatformConnection, PlatformEvent},
     config::Config,
     handler::{
         command::handle_command, message::handle_message, permission::handle_permission_response,
         shell::handle_shell_command,
     },
     session::SessionManager,
-    slack::{SlackConnection, SlackEvent},
 };
+use slack_morphism::prelude::SlackFile;
 use std::sync::Arc;
 use tracing::debug;
 
-/// Main entry point for handling Slack events.
+/// Main entry point for handling platform events.
 /// Routes events to appropriate handlers based on message content.
 pub async fn handle_event(
-    event: SlackEvent,
-    slack: Arc<SlackConnection>,
+    event: PlatformEvent,
+    connection: PlatformConnection,
     config: Arc<Config>,
     agent_manager: Arc<AgentManager>,
     session_manager: Arc<SessionManager>,
@@ -30,13 +30,16 @@ pub async fn handle_event(
 ) {
     tracing::debug!("Received event: {:?}", event);
 
-    let SlackEvent {
-        channel,
-        ts,
-        thread_ts,
-        text,
-        files,
-    } = event;
+    let channel = event.channel().to_string();
+    let ts = event.ts().to_string();
+    let thread_ts = event.thread_ts().map(String::from);
+    let text = event.text().to_string();
+
+    // Extract files based on platform
+    let files: Vec<SlackFile> = match &event {
+        PlatformEvent::Slack(e) => e.files.clone(),
+        PlatformEvent::Feishu(_) => vec![], // TODO: implement file extraction for Feishu
+    };
 
     // Check if this is a response to a pending permission request FIRST
     let thread_key = thread_ts.as_deref().unwrap_or(&ts);
@@ -47,7 +50,15 @@ pub async fn handle_event(
     );
     if let Some((options, response_tx)) = pending_permissions.write().await.remove(thread_key) {
         debug!("Found pending permission request, handling response");
-        handle_permission_response(&text, options, response_tx, &slack, &channel, thread_key).await;
+        handle_permission_response(
+            &text,
+            options,
+            response_tx,
+            &connection,
+            &channel,
+            thread_key,
+        )
+        .await;
         return;
     }
 
@@ -57,7 +68,7 @@ pub async fn handle_event(
             &text,
             &channel,
             thread_ts.as_deref(),
-            slack,
+            connection,
             config.clone(),
             session_manager,
         )
@@ -72,7 +83,7 @@ pub async fn handle_event(
             &channel,
             &ts,
             thread_ts.as_deref(),
-            slack.clone(),
+            connection.clone(),
             config.clone(),
             agent_manager.clone(),
             session_manager.clone(),
@@ -87,7 +98,7 @@ pub async fn handle_event(
         &files,
         &channel,
         thread_ts.as_deref(),
-        slack,
+        connection,
         agent_manager,
         session_manager,
         notification_tx,

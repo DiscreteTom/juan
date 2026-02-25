@@ -8,8 +8,12 @@ use tracing::{debug, trace};
 /// Config for [juan](https://github.com/DiscreteTom/juan)
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, TomlScaffold)]
 pub struct Config {
-    /// Slack workspace connection settings
-    pub slack: SlackConfig,
+    /// Slack workspace connection settings (optional)
+    #[serde(default)]
+    pub slack: Option<SlackConfig>,
+    /// Feishu/Lark workspace connection settings (optional)
+    #[serde(default)]
+    pub feishu: Option<FeishuConfig>,
     /// Bridge behavior settings
     pub bridge: BridgeConfig,
     /// List of configured agents
@@ -23,6 +27,15 @@ pub struct SlackConfig {
     pub bot_token: String,
     /// App-level token for Socket Mode (starts with xapp-)
     pub app_token: String,
+}
+
+/// Feishu/Lark connection configuration
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, TomlScaffold)]
+pub struct FeishuConfig {
+    /// App ID from Feishu Open Platform
+    pub app_id: String,
+    /// App Secret from Feishu Open Platform
+    pub app_secret: String,
 }
 
 /// Bridge behavior configuration
@@ -90,10 +103,14 @@ impl Config {
         }
 
         let config = Config {
-            slack: SlackConfig {
+            slack: Some(SlackConfig {
                 bot_token: "xoxb-your-bot-token".into(),
                 app_token: "xapp-your-app-token".into(),
-            },
+            }),
+            feishu: Some(FeishuConfig {
+                app_id: "cli_your-app-id".into(),
+                app_secret: "your-app-secret".into(),
+            }),
             bridge: BridgeConfig {
                 default_workspace: "~".into(),
                 auto_approve: false,
