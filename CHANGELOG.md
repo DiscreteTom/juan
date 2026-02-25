@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `#cancel` command to cancel ongoing agent operations
+- Support for multiple concurrent sessions per agent (each session spawns its own agent process)
+
+### Changed
+
+- Architecture redesign: one agent process per session instead of shared agent processes
 
 ## [0.3.0] - 2026-02-25
 

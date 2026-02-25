@@ -55,6 +55,9 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
         notification_tx.clone(),
         permission_request_tx,
     ));
+
+    // Register agent configurations
+    agent_manager.register_agents(config.agents.clone()).await;
     debug!("Agent manager initialized (agents will spawn on-demand)");
 
     // Create session manager to track Slack thread -> agent session mappings
@@ -415,8 +418,8 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
         while let Some(permission_req) = permission_request_rx.recv().await {
             debug!(
-                "Received permission request from agent {} for session {}",
-                permission_req.agent_name, permission_req.session_id
+                "Received permission request for session {}",
+                permission_req.session_id
             );
 
             // Find the Slack thread for this session

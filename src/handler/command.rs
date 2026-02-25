@@ -78,25 +78,7 @@ pub async fn handle_command(
                 }
             };
 
-            // Spawn agent if not already running
-            if agent_manager
-                .list_agents()
-                .await
-                .iter()
-                .find(|a| a == &agent_name)
-                .is_none()
-            {
-                debug!("Agent {} not running, spawning...", agent_name);
-                if let Err(e) = agent_manager.spawn_agents(vec![agent_config.clone()]).await {
-                    let _ = slack.add_reaction(channel, ts, "x").await;
-                    let _ = slack
-                        .send_message(channel, Some(ts), &format!("Failed to spawn agent: {}", e))
-                        .await;
-                    return;
-                }
-            }
-
-            // Create ACP session
+            // Create ACP session (spawns agent process)
             debug!("Creating ACP session for agent={}", agent_name);
             let workspace_path = workspace
                 .clone()
@@ -193,7 +175,7 @@ pub async fn handle_command(
                                             mode_option.id.clone(),
                                             mode_value.clone(),
                                         );
-                                        agent_manager.set_config_option(agent_name, req).await.is_ok()
+                                        agent_manager.set_config_option(&session_id, req).await.is_ok()
                                     } else {
                                         false
                                     }
@@ -209,7 +191,7 @@ pub async fn handle_command(
                                     session_id.clone(),
                                     mode_value,
                                 );
-                                let _ = agent_manager.set_mode(agent_name, req).await;
+                                let _ = agent_manager.set_mode(&session_id, req).await;
                             }
                         }
                     }
@@ -230,7 +212,7 @@ pub async fn handle_command(
                                         model_option.id.clone(),
                                         default_model.clone(),
                                     );
-                                    let _ = agent_manager.set_config_option(agent_name, req).await;
+                                    let _ = agent_manager.set_config_option(&session_id, req).await;
                                 }
                             }
                         }
@@ -353,6 +335,12 @@ pub async fn handle_command(
 
             let thread_key = thread_ts.unwrap();
             let session = session_manager.get_session(thread_key).await;
+
+            // End agent session first
+            if let Some(ref sess) = session {
+                let _ = agent_manager.end_session(&sess.session_id).await;
+            }
+
             match session_manager.end_session(thread_key).await {
                 Ok(_) => {
                     // Add reaction to user's #new message to mark as ended
@@ -394,10 +382,7 @@ pub async fn handle_command(
                     return;
                 }
 
-                match agent_manager
-                    .cancel(&session.agent_name, session.session_id.clone())
-                    .await
-                {
+                match agent_manager.cancel(&session.session_id).await {
                     Ok(_) => {
                         let _ = session_manager.set_busy(thread_key, false).await;
                         let _ = slack
@@ -721,7 +706,7 @@ pub async fn handle_command(
                                 mode_value.clone(),
                             );
                             match agent_manager
-                                .set_config_option(&session.agent_name, req)
+                                .set_config_option(&session.session_id, req)
                                 .await
                             {
                                 Ok(_) => {
@@ -759,7 +744,7 @@ pub async fn handle_command(
                         session.session_id.clone(),
                         mode_value.clone(),
                     );
-                    match agent_manager.set_mode(&session.agent_name, req).await {
+                    match agent_manager.set_mode(&session.session_id, req).await {
                         Ok(_) => {
                             let _ = slack
                                 .send_message(
@@ -905,7 +890,7 @@ pub async fn handle_command(
                             model_value.clone(),
                         );
                         match agent_manager
-                            .set_config_option(&session.agent_name, req)
+                            .set_config_option(&session.session_id, req)
                             .await
                         {
                             Ok(_) => {

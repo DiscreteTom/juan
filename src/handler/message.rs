@@ -74,10 +74,9 @@ pub async fn handle_message(
     let thread_ts = thread_ts.map(|s| s.to_string());
     let thread_key = thread_key.to_string();
     let session_id = session.session_id.clone();
-    let agent_name = session.agent_name.clone();
 
     tokio::spawn(async move {
-        match agent_manager_clone.prompt(&agent_name, prompt_req).await {
+        match agent_manager_clone.prompt(&session_id, prompt_req).await {
             Ok(resp) => {
                 tracing::info!("Prompt completed with stop_reason: {:?}", resp.stop_reason);
 
