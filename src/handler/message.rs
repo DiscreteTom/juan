@@ -42,7 +42,7 @@ pub async fn handle_message(
             .send_message(
                 channel,
                 thread_ts,
-                "Session is busy processing a previous message. Please wait.",
+                "Session is busy processing a previous message. Please wait or use `#cancel` to cancel the ongoing task.",
             )
             .await;
         return;
