@@ -238,8 +238,8 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
                                         let needs_content =
                                             tool_call.content != stored_tool_call.content;
 
-                                        // Update message text only if title changed
-                                        if title_changed {
+                                        // Update message text only if title changed and not empty
+                                        if title_changed && !tool_call.title.is_empty() {
                                             let msg = format!("🔧 Tool: {}", tool_call.title);
                                             let _ =
                                                 slack_clone.update_message(channel, ts, &msg).await;
@@ -315,7 +315,8 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
                                         // Check if title changed
                                         if let Some(title) = &update.fields.title {
-                                            if title != &stored_tool_call.title {
+                                            if !title.is_empty() && title != &stored_tool_call.title
+                                            {
                                                 let msg = format!("🔧 Tool: {}", title);
                                                 let _ = slack_clone
                                                     .update_message(&channel, &ts, &msg)
