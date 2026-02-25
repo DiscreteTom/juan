@@ -17,7 +17,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 slack-morphism = { version = "2", features = ["hyper"] }
-agent-client-protocol = "0.9"
+agent-client-protocol = { version = "0.9", features = ["unstable_cancel_request"] }
 dirs = "5"
 async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["compat"] }

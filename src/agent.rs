@@ -65,6 +65,8 @@ enum AgentCommand {
         req: SetSessionModeRequest,
         resp_tx: oneshot::Sender<agent_client_protocol::Result<SetSessionModeResponse>>,
     },
+    /// Cancel an ongoing session operation
+    Cancel { session_id: SessionId },
 }
 
 impl AgentManager {
@@ -215,6 +217,16 @@ impl AgentManager {
                             trace!("SetMode result: {:?}", result);
                             let _ = resp_tx.send(result);
                         }
+                        AgentCommand::Cancel { session_id } => {
+                            debug!(
+                                "Agent {} processing Cancel for session {}",
+                                agent_name, session_id
+                            );
+                            let notification = CancelNotification::new(session_id);
+                            if let Err(e) = connection.cancel(notification).await {
+                                error!("Failed to send cancel notification: {}", e);
+                            }
+                        }
                     }
                 }
             }));
@@ -351,6 +363,28 @@ impl AgentManager {
             .await
             .context("Agent command channel closed")?
             .map_err(|e| anyhow::anyhow!("Agent error: {}", e))
+    }
+
+    /// Cancels an ongoing session operation.
+    pub async fn cancel(&self, agent_name: &str, session_id: SessionId) -> Result<()> {
+        debug!(
+            "Cancelling session: agent={}, session={}",
+            agent_name, session_id
+        );
+        let handle = self
+            .agents
+            .read()
+            .await
+            .get(agent_name)
+            .ok_or_else(|| anyhow::anyhow!("Agent not found: {}", agent_name))?
+            .tx
+            .clone();
+
+        handle
+            .send(AgentCommand::Cancel { session_id })
+            .context("Failed to send cancel command to agent")?;
+
+        Ok(())
     }
 
     /// Lists all currently running agents.
