@@ -13,11 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Raw Slack Web API message post/update paths to support unsupported block types
 - Rate limiting for all Slack API calls (minimum 800ms interval)
 - Concurrent event handling to prevent blocking
+- Support for agent thinking display
+- Support for agent plan display
 
 ### Changed
 
 - Use Block Kit markdown blocks instead of plain text with mrkdwn formatting
 - Buffer flushing now uses notification channel instead of sleep-based timing
+- Optimized OpenCode compatibility
 
 ### Fixed
 
