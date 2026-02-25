@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `#cancel` command to cancel ongoing agent operations
 - Support for multiple concurrent sessions per agent (each session spawns its own agent process)
+- `#model` command now supports deprecated `set_session_model` API with fallback
 
 ### Changed
 

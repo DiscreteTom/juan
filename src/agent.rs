@@ -65,6 +65,11 @@ enum AgentCommand {
         req: SetSessionModeRequest,
         resp_tx: oneshot::Sender<agent_client_protocol::Result<SetSessionModeResponse>>,
     },
+    /// Set session model (deprecated)
+    SetModel {
+        req: SetSessionModelRequest,
+        resp_tx: oneshot::Sender<agent_client_protocol::Result<SetSessionModelResponse>>,
+    },
 }
 
 impl AgentManager {
@@ -237,6 +242,11 @@ impl AgentManager {
                             let result = connection.set_session_mode(req).await;
                             let _ = resp_tx.send(result);
                         }
+                        AgentCommand::SetModel { req, resp_tx } => {
+                            debug!("Processing SetModel for session {}", req.session_id);
+                            let result = connection.set_session_model(req).await;
+                            let _ = resp_tx.send(result);
+                        }
                     }
                 }
             }));
@@ -344,6 +354,33 @@ impl AgentManager {
         let (resp_tx, resp_rx) = oneshot::channel();
         handle
             .send(AgentCommand::SetMode { req, resp_tx })
+            .context("Failed to send command to agent")?;
+
+        resp_rx
+            .await
+            .context("Agent command channel closed")?
+            .map_err(|e| anyhow::anyhow!("Agent error: {}", e))
+    }
+
+    /// Sets session model (deprecated API).
+    pub async fn set_model(
+        &self,
+        session_id: &SessionId,
+        req: SetSessionModelRequest,
+    ) -> Result<SetSessionModelResponse> {
+        debug!("Setting model for session: {}", session_id);
+        let handle = self
+            .agents
+            .read()
+            .await
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("Session not found: {}", session_id))?
+            .tx
+            .clone();
+
+        let (resp_tx, resp_rx) = oneshot::channel();
+        handle
+            .send(AgentCommand::SetModel { req, resp_tx })
             .context("Failed to send command to agent")?;
 
         resp_rx

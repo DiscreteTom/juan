@@ -100,11 +100,16 @@ pub async fn handle_command(
 
             let new_session_req = agent_client_protocol::NewSessionRequest::new(workspace_path);
 
-            let (session_id, config_options, modes) = match agent_manager
+            let (session_id, config_options, modes, models) = match agent_manager
                 .new_session(agent_name, new_session_req, agent_config.auto_approve)
                 .await
             {
-                Ok(resp) => (resp.session_id, resp.config_options, resp.modes),
+                Ok(resp) => (
+                    resp.session_id,
+                    resp.config_options,
+                    resp.modes,
+                    resp.models,
+                ),
                 Err(e) => {
                     let _ = slack.add_reaction(channel, ts, "x").await;
                     let _ = slack
@@ -147,6 +152,12 @@ pub async fn handle_command(
                     if let Some(modes) = modes {
                         if let Err(e) = session_manager.update_modes(ts, modes).await {
                             debug!("Failed to store initial modes: {}", e);
+                        }
+                    }
+                    // Store deprecated models if provided
+                    if let Some(models) = models {
+                        if let Err(e) = session_manager.update_models(ts, models).await {
+                            debug!("Failed to store initial models: {}", e);
                         }
                     }
                     // Set default mode if configured
@@ -798,8 +809,8 @@ pub async fn handle_command(
             let session = session.unwrap();
             if parts.len() < 2 {
                 // Show available models
-                // Try config_options (new API)
-                if let Some(config_options) = &session.config_options {
+                // Try config_options first (new API)
+                let model_option_found = if let Some(config_options) = &session.config_options {
                     if let Some(model_option) = config_options.iter().find(|opt| {
                         matches!(
                             opt.category,
@@ -855,16 +866,44 @@ pub async fn handle_command(
                             };
                             let msg = format!("Available models:\n{}", options);
                             let _ = slack.send_message(channel, thread_ts, &msg).await;
+                            true
                         } else {
-                            let _ = slack
-                                .send_message(channel, thread_ts, "Model option is not a selector.")
-                                .await;
+                            false
                         }
                     } else {
-                        let _ = slack
-                            .send_message(channel, thread_ts, "No model configuration available.")
-                            .await;
+                        false
                     }
+                } else {
+                    false
+                };
+
+                if model_option_found {
+                    return;
+                }
+
+                // Fallback to deprecated models API
+                if let Some(models) = &session.models {
+                    let current = &models.current_model_id;
+                    let options = models
+                        .available_models
+                        .iter()
+                        .map(|model| {
+                            let marker = if model.model_id == *current {
+                                "→"
+                            } else {
+                                " "
+                            };
+                            format!(
+                                "{} `{}` - {}",
+                                marker,
+                                model.model_id,
+                                model.description.as_deref().unwrap_or(&model.name)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let msg = format!("Available models:\n{}", options);
+                    let _ = slack.send_message(channel, thread_ts, &msg).await;
                 } else {
                     let _ = slack
                         .send_message(channel, thread_ts, "No model configuration available.")
@@ -873,51 +912,93 @@ pub async fn handle_command(
             } else {
                 // Switch model
                 let model_value = parts[1].to_string();
+                let force_model = model_value.ends_with('!');
+                let model_value = if force_model {
+                    model_value.trim_end_matches('!').to_string()
+                } else {
+                    model_value
+                };
 
-                // Try config_options (new API)
-                if let Some(config_options) = &session.config_options {
-                    if let Some(model_option) = config_options.iter().find(|opt| {
-                        matches!(
-                            opt.category,
-                            Some(agent_client_protocol::SessionConfigOptionCategory::Model)
-                        )
-                    }) {
-                        let req = agent_client_protocol::SetSessionConfigOptionRequest::new(
-                            session.session_id.clone(),
-                            model_option.id.clone(),
-                            model_value.clone(),
-                        );
-                        match agent_manager
-                            .set_config_option(&session.session_id, req)
-                            .await
-                        {
-                            Ok(_) => {
-                                let _ = slack
-                                    .send_message(
-                                        channel,
-                                        thread_ts,
-                                        &format!("Model switched to: `{}`", model_value),
-                                    )
-                                    .await;
+                // Try config_options first (new API)
+                let model_switched = if force_model || session.config_options.is_some() {
+                    if let Some(config_options) = &session.config_options {
+                        if let Some(model_option) = config_options.iter().find(|opt| {
+                            matches!(
+                                opt.category,
+                                Some(agent_client_protocol::SessionConfigOptionCategory::Model)
+                            )
+                        }) {
+                            let req = agent_client_protocol::SetSessionConfigOptionRequest::new(
+                                session.session_id.clone(),
+                                model_option.id.clone(),
+                                model_value.clone(),
+                            );
+                            match agent_manager
+                                .set_config_option(&session.session_id, req)
+                                .await
+                            {
+                                Ok(_) => {
+                                    let _ = slack
+                                        .send_message(
+                                            channel,
+                                            thread_ts,
+                                            &format!("Model switched to: `{}`", model_value),
+                                        )
+                                        .await;
+                                    true
+                                }
+                                Err(e) => {
+                                    debug!("Failed to set model via config_options: {}", e);
+                                    false
+                                }
                             }
-                            Err(e) => {
-                                let _ = slack
-                                    .send_message(
-                                        channel,
-                                        thread_ts,
-                                        &format!("Failed to switch model: {}", e),
-                                    )
-                                    .await;
-                            }
+                        } else {
+                            false
                         }
                     } else {
-                        let _ = slack
-                            .send_message(channel, thread_ts, "No model configuration available.")
-                            .await;
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if model_switched {
+                    return;
+                }
+
+                // Fallback to deprecated models API
+                if force_model || session.models.is_some() {
+                    let req = agent_client_protocol::SetSessionModelRequest::new(
+                        session.session_id.clone(),
+                        model_value.clone(),
+                    );
+                    match agent_manager.set_model(&session.session_id, req).await {
+                        Ok(_) => {
+                            let _ = slack
+                                .send_message(
+                                    channel,
+                                    thread_ts,
+                                    &format!("Model switched to: `{}`", model_value),
+                                )
+                                .await;
+                        }
+                        Err(e) => {
+                            let _ = slack
+                                .send_message(
+                                    channel,
+                                    thread_ts,
+                                    &format!("Failed to switch model: {}", e),
+                                )
+                                .await;
+                        }
                     }
                 } else {
                     let _ = slack
-                        .send_message(channel, thread_ts, "No model configuration available.")
+                        .send_message(
+                            channel,
+                            thread_ts,
+                            "No model configuration available. Use `#model <value>!` to force set.",
+                        )
                         .await;
                 }
             }

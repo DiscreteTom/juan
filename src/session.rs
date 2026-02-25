@@ -46,6 +46,8 @@ pub struct SessionState {
     pub config_options: Option<Vec<SessionConfigOption>>,
     /// Deprecated: Session modes (for backward compatibility)
     pub modes: Option<SessionModeState>,
+    /// Deprecated: Session models (for backward compatibility)
+    pub models: Option<SessionModelState>,
 }
 
 impl SessionManager {
@@ -99,6 +101,7 @@ impl SessionManager {
             initial_ts: thread_key.clone(),
             config_options: None,
             modes: None,
+            models: None,
         };
 
         self.sessions
@@ -176,6 +179,17 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(thread_key) {
             session.modes = Some(modes);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Session not found: {}", thread_key))
+        }
+    }
+
+    /// Updates the models for a session (deprecated API).
+    pub async fn update_models(&self, thread_key: &str, models: SessionModelState) -> Result<()> {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(thread_key) {
+            session.models = Some(models);
             Ok(())
         } else {
             Err(anyhow::anyhow!("Session not found: {}", thread_key))
