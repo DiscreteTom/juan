@@ -483,28 +483,36 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
     // Main event loop: process Slack events
     debug!("Entering main event loop");
-    while let Some(event) = event_rx.recv().await {
-        debug!("Processing event from main loop");
-        // Spawn a new task for each event to prevent blocking
-        let slack = slack.clone();
-        let config = config.clone();
-        let agent_manager = agent_manager.clone();
-        let session_manager = session_manager.clone();
-        let pending_permissions = pending_permissions.clone();
-        let notification_tx = notification_tx.clone();
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received Ctrl+C, shutting down...");
+                break;
+            }
+            Some(event) = event_rx.recv() => {
+                debug!("Processing event from main loop");
+                // Spawn a new task for each event to prevent blocking
+                let slack = slack.clone();
+                let config = config.clone();
+                let agent_manager = agent_manager.clone();
+                let session_manager = session_manager.clone();
+                let pending_permissions = pending_permissions.clone();
+                let notification_tx = notification_tx.clone();
 
-        tokio::spawn(async move {
-            handler::handle_event(
-                event,
-                slack,
-                config,
-                agent_manager,
-                session_manager,
-                pending_permissions,
-                notification_tx,
-            )
-            .await;
-        });
+                tokio::spawn(async move {
+                    handler::handle_event(
+                        event,
+                        slack,
+                        config,
+                        agent_manager,
+                        session_manager,
+                        pending_permissions,
+                        notification_tx,
+                    )
+                    .await;
+                });
+            }
+        }
     }
 
     Ok(())

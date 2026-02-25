@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Architecture redesign: one agent process per session instead of shared agent processes
+- Faster Ctrl+C shutdown using signal handling
 
 ### Fixed
 
