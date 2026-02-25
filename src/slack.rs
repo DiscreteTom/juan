@@ -49,6 +49,7 @@ pub struct SlackEvent {
     pub ts: String,
     pub thread_ts: Option<String>,
     pub text: String,
+    pub files: Vec<SlackFile>,
 }
 
 /// Slack client wrapper for Socket Mode connection and API calls.
@@ -276,6 +277,93 @@ impl SlackConnection {
         Ok(())
     }
 
+    /// Downloads a file from Slack using url_private_download.
+    pub async fn download_file(&self, url: &str) -> Result<Vec<u8>> {
+        debug!("Downloading file from {}", url);
+        let http_client = reqwest::Client::new();
+        let resp = http_client
+            .get(url)
+            .bearer_auth(&self.bot_token_str)
+            .send()
+            .await
+            .context("Failed to download file")?;
+
+        if !resp.status().is_success() {
+            anyhow::bail!("Failed to download file: HTTP {}", resp.status());
+        }
+
+        let bytes = resp.bytes().await.context("Failed to read file bytes")?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Uploads binary data to Slack.
+    pub async fn upload_binary_file(
+        &self,
+        channel: &str,
+        thread_ts: Option<&str>,
+        content: &[u8],
+        filename: &str,
+        title: Option<&str>,
+    ) -> Result<()> {
+        // Request rate limit permit
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+        self.rate_limit_tx
+            .send(resp_tx)
+            .context("Failed to send upload file request")?;
+
+        resp_rx
+            .await
+            .context("Rate limit worker dropped response")?;
+
+        debug!(
+            "Uploading binary file to channel={}, thread_ts={:?}, filename={}",
+            channel, thread_ts, filename
+        );
+        let session = self.client.open_session(&self.bot_token);
+
+        // Get upload URL from Slack (files.getUploadUrlExternal)
+        let get_url_req =
+            SlackApiFilesGetUploadUrlExternalRequest::new(filename.into(), content.len());
+        let url_resp = session
+            .get_upload_url_external(&get_url_req)
+            .await
+            .context("Failed to get upload URL")?;
+
+        // Upload file content to the URL via HTTP POST
+        let http_client = reqwest::Client::new();
+        http_client
+            .post(url_resp.upload_url.0.as_str())
+            .body(content.to_vec())
+            .send()
+            .await
+            .context("Failed to upload file content")?;
+
+        // Complete the upload (files.completeUploadExternal) with channel/thread info
+        let mut file_complete = SlackApiFilesComplete::new(url_resp.file_id);
+        if let Some(title) = title {
+            file_complete = file_complete.with_title(title.into());
+        }
+
+        let mut complete_req = SlackApiFilesCompleteUploadExternalRequest::new(vec![file_complete]);
+
+        if let Some(ts) = thread_ts {
+            complete_req = complete_req
+                .with_channel_id(channel.into())
+                .with_thread_ts(ts.into());
+        } else {
+            complete_req = complete_req.with_channel_id(channel.into());
+        }
+
+        let resp = session
+            .files_complete_upload_external(&complete_req)
+            .await
+            .context("Failed to complete file upload")?;
+
+        debug!("Binary file uploaded successfully: {:?}", resp);
+
+        Ok(())
+    }
+
     /// Sends a message with custom blocks to a Slack channel or thread.
     /// Returns the timestamp (ts) of the sent message.
     pub async fn send_message_with_blocks(
@@ -444,36 +532,42 @@ async fn handle_push_event(
             }
 
             if let Some(content) = msg.content {
-                if let Some(text) = content.text {
-                    // Decode Slack text formatting
-                    let text = decode_slack_text(&text);
-                    let user = msg.sender.user.map(|u| u.to_string()).unwrap_or_default();
-                    debug!(
-                        "Received message from user={}, channel={:?}",
-                        user, msg.origin.channel
-                    );
-                    // Convert to SlackEvent and send to channel
-                    let _ = tx.send(SlackEvent {
-                        channel: msg
-                            .origin
-                            .channel
-                            .map(|c| c.to_string())
-                            .unwrap_or_default(),
-                        ts: msg.origin.ts.to_string(),
-                        thread_ts: msg.origin.thread_ts.map(|ts| ts.to_string()),
-                        text,
-                    });
-                }
+                let text = content.text.unwrap_or_default();
+                let files = content.files.unwrap_or_default();
+                // Decode Slack text formatting
+                let text = decode_slack_text(&text);
+                let user = msg.sender.user.map(|u| u.to_string()).unwrap_or_default();
+                debug!(
+                    "Received message from user={}, channel={:?}, files={}",
+                    user,
+                    msg.origin.channel,
+                    files.len()
+                );
+                // Convert to SlackEvent and send to channel
+                let _ = tx.send(SlackEvent {
+                    channel: msg
+                        .origin
+                        .channel
+                        .map(|c| c.to_string())
+                        .unwrap_or_default(),
+                    ts: msg.origin.ts.to_string(),
+                    thread_ts: msg.origin.thread_ts.map(|ts| ts.to_string()),
+                    text,
+                    files,
+                });
             }
         }
         SlackEventCallbackBody::AppMention(mention) => {
             let user = mention.user.to_string();
             let text = mention.content.text.unwrap_or_default();
+            let files = mention.content.files.unwrap_or_default();
             // Decode Slack text formatting
             let text = decode_slack_text(&text);
             debug!(
-                "Received app mention from user={}, channel={}",
-                user, mention.channel
+                "Received app mention from user={}, channel={}, files={}",
+                user,
+                mention.channel,
+                files.len()
             );
 
             // Convert to SlackEvent and send to channel
@@ -482,6 +576,7 @@ async fn handle_push_event(
                 ts: mention.origin.ts.to_string(),
                 thread_ts: mention.origin.thread_ts.map(|ts| ts.to_string()),
                 text,
+                files,
             });
         }
         _ => debug!("Unhandled callback event"),

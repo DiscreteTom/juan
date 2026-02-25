@@ -51,6 +51,7 @@ cargo install --git https://github.com/DiscreteTom/juan
      - `channels:history` - View messages in public channels
      - `groups:history` - View messages in private channels
      - `im:history` - View messages in direct messages
+     - `files:read` - View files in messages and channels
      - `files:write` - Upload files and share them
      - `reactions:write` - Add emoji reactions to messages
    - Install the app to your workspace
@@ -87,6 +88,7 @@ juan run
 
 > [!TIP]
 > It's recommended to run Juan in tmux so it persists in the background:
+>
 > ```bash
 > tmux new -s juan "juan run"
 > ```

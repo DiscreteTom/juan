@@ -473,30 +473,85 @@ pub async fn handle_command(
                     }
                 }
             } else {
-                match std::fs::read_to_string(&full_path) {
-                    Ok(content) => {
-                        let msg = format!("📄 File: {}", file_path);
-                        match slack.send_message(channel, thread_ts, &msg).await {
-                            Ok(ts) => {
-                                let _ = slack
-                                    .upload_file(
-                                        channel,
-                                        Some(&ts),
-                                        &content,
-                                        file_path,
-                                        Some("Content"),
-                                    )
-                                    .await;
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to send message: {}", e);
+                // Check if it's an image file
+                let is_image = full_path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| {
+                        matches!(
+                            ext.to_lowercase().as_str(),
+                            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
+                        )
+                    })
+                    .unwrap_or(false);
+
+                if is_image {
+                    // For image files, read as bytes and upload to Slack
+                    match std::fs::read(&full_path) {
+                        Ok(bytes) => {
+                            let msg = format!("🖼️ Image: {}", file_path);
+                            match slack.send_message(channel, thread_ts, &msg).await {
+                                Ok(ts) => {
+                                    let filename = full_path
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or(file_path);
+                                    let _ = slack
+                                        .upload_binary_file(
+                                            channel,
+                                            Some(&ts),
+                                            &bytes,
+                                            filename,
+                                            Some("Image"),
+                                        )
+                                        .await;
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to send message: {}", e);
+                                }
                             }
                         }
+                        Err(e) => {
+                            let _ = slack
+                                .send_message(
+                                    channel,
+                                    thread_ts,
+                                    &format!("Error reading image file: {}", e),
+                                )
+                                .await;
+                        }
                     }
-                    Err(e) => {
-                        let _ = slack
-                            .send_message(channel, thread_ts, &format!("Error reading file: {}", e))
-                            .await;
+                } else {
+                    // Text file - read as string and upload to Slack
+                    match std::fs::read_to_string(&full_path) {
+                        Ok(content) => {
+                            let msg = format!("📄 File: {}", file_path);
+                            match slack.send_message(channel, thread_ts, &msg).await {
+                                Ok(ts) => {
+                                    let _ = slack
+                                        .upload_file(
+                                            channel,
+                                            Some(&ts),
+                                            &content,
+                                            file_path,
+                                            Some("Content"),
+                                        )
+                                        .await;
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to send message: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = slack
+                                .send_message(
+                                    channel,
+                                    thread_ts,
+                                    &format!("Error reading file: {}", e),
+                                )
+                                .await;
+                        }
                     }
                 }
             }

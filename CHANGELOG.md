@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Image input and output support
+  - Attach images to Slack messages to include them in agent prompts
+  - Use `#read <image_path>` to send local images from workspace to Slack
+  - Agents can send images back, which are automatically uploaded to Slack
+  - Supports PNG, JPEG, GIF, WebP, BMP formats
+- New Slack bot permission required: `files:read`
 - `#cancel` command to cancel ongoing agent operations
 - Support for multiple concurrent sessions per agent (each session spawns its own agent process)
 - `#model` command now supports deprecated `set_session_model` API with fallback

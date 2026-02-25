@@ -157,16 +157,54 @@ pub async fn run_bridge(config: Arc<config::Config>) -> Result<()> {
 
                         match notification.update {
                             agent_client_protocol::SessionUpdate::AgentMessageChunk(chunk) => {
-                                if let agent_client_protocol::ContentBlock::Text(text) =
-                                    chunk.content
-                                {
-                                    // Buffer the message chunk
-                                    buffers_clone
-                                        .write()
-                                        .await
-                                        .entry(notification.session_id.clone())
-                                        .or_insert_with(String::new)
-                                        .push_str(&text.text);
+                                match chunk.content {
+                                    agent_client_protocol::ContentBlock::Text(text) => {
+                                        // Buffer the message chunk
+                                        buffers_clone
+                                            .write()
+                                            .await
+                                            .entry(notification.session_id.clone())
+                                            .or_insert_with(String::new)
+                                            .push_str(&text.text);
+                                    }
+                                    agent_client_protocol::ContentBlock::Image(image) => {
+                                        // Decode base64 image and upload to Slack
+                                        match base64::Engine::decode(
+                                            &base64::engine::general_purpose::STANDARD,
+                                            &image.data,
+                                        ) {
+                                            Ok(bytes) => {
+                                                let ext = image
+                                                    .mime_type
+                                                    .split('/')
+                                                    .last()
+                                                    .unwrap_or("png");
+                                                let filename = format!("image.{}", ext);
+                                                if let Err(e) = slack_clone
+                                                    .upload_binary_file(
+                                                        &session.channel,
+                                                        Some(&thread_key),
+                                                        &bytes,
+                                                        &filename,
+                                                        Some("Agent Image"),
+                                                    )
+                                                    .await
+                                                {
+                                                    tracing::error!(
+                                                        "Failed to upload image: {}",
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::error!(
+                                                    "Failed to decode base64 image: {}",
+                                                    e
+                                                );
+                                            }
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                             agent_client_protocol::SessionUpdate::AgentThoughtChunk(chunk) => {

@@ -10,6 +10,7 @@ use tracing::{debug, trace};
 /// 3. Update Slack with response
 pub async fn handle_message(
     text: &str,
+    files: &[slack_morphism::prelude::SlackFile],
     channel: &str,
     thread_ts: Option<&str>,
     slack: Arc<slack::SlackConnection>,
@@ -58,12 +59,41 @@ pub async fn handle_message(
         "Sending prompt to agent={}, session_id={}",
         session.agent_name, session.session_id
     );
-    let prompt_req = agent_client_protocol::PromptRequest::new(
-        session.session_id.clone(),
-        vec![agent_client_protocol::ContentBlock::Text(
-            agent_client_protocol::TextContent::new(text.to_string()),
-        )],
-    );
+
+    // Build content blocks - start with text
+    let mut content_blocks = vec![agent_client_protocol::ContentBlock::Text(
+        agent_client_protocol::TextContent::new(text.to_string()),
+    )];
+
+    // Add image files
+    for file in files {
+        if let Some(mimetype) = &file.mimetype {
+            if mimetype.0.starts_with("image/") {
+                if let Some(url) = &file.url_private_download {
+                    match slack.download_file(url.as_str()).await {
+                        Ok(bytes) => {
+                            let base64_data = base64::Engine::encode(
+                                &base64::engine::general_purpose::STANDARD,
+                                &bytes,
+                            );
+                            content_blocks.push(agent_client_protocol::ContentBlock::Image(
+                                agent_client_protocol::ImageContent::new(
+                                    base64_data,
+                                    mimetype.0.clone(),
+                                ),
+                            ));
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to download image file: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let prompt_req =
+        agent_client_protocol::PromptRequest::new(session.session_id.clone(), content_blocks);
 
     // Send prompt to agent - response will stream via notifications
     // We don't wait for completion to avoid blocking the event loop

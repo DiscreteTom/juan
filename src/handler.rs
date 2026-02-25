@@ -35,6 +35,7 @@ pub async fn handle_event(
         ts,
         thread_ts,
         text,
+        files,
     } = event;
 
     // Check if this is a response to a pending permission request FIRST
@@ -83,6 +84,7 @@ pub async fn handle_event(
     // Regular messages - forward to agent
     handle_message(
         &text,
+        &files,
         &channel,
         thread_ts.as_deref(),
         slack,
