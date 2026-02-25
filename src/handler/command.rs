@@ -104,12 +104,19 @@ pub async fn handle_command(
                 .new_session(agent_name, new_session_req, agent_config.auto_approve)
                 .await
             {
-                Ok(resp) => (
-                    resp.session_id,
-                    resp.config_options,
-                    resp.modes,
-                    resp.models,
-                ),
+                Ok(resp) => {
+                    debug!(
+                        "Got session response - config_options: {:?}, modes: {:?}, models: {:?}",
+                        resp.config_options, resp.modes, resp.models
+                    );
+                    (
+                        resp.session_id,
+                        resp.config_options,
+                        resp.modes,
+                        resp.models,
+                    )
+                }
+
                 Err(e) => {
                     let _ = slack.add_reaction(channel, ts, "x").await;
                     let _ = slack

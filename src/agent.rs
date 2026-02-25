@@ -263,6 +263,11 @@ impl AgentManager {
             .context("Session creation channel closed")?
             .map_err(|e| anyhow::anyhow!("Failed to create session: {}", e))?;
 
+        debug!(
+            "Session created - config_options: {:?}, modes: {:?}, models: {:?}",
+            response.config_options, response.modes, response.models
+        );
+
         // Store handle and permissions
         let handle = AgentHandle {
             tx: cmd_tx,
