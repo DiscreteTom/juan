@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 const HELP_MESSAGE: &str = "Available commands:
-- `#new &lt;agent&gt; [workspace]` - Start a new agent session
+- `#new &lt;agent&gt; [workspace] [--comment]` - Start a new agent session
 - `#agents` - List available agents
 - `#mode` - Show available modes and current mode
 - `#mode &lt;value&gt;` - Switch to a different mode
@@ -56,14 +56,33 @@ pub async fn handle_command(
                     .send_message(
                         channel,
                         Some(ts),
-                        "Usage: #new <agent_name> [workspace_path]",
+                        "Usage: #new <agent_name> [workspace] [--comment]",
                     )
                     .await;
                 return;
             }
 
             let agent_name = parts[1];
-            let workspace = parts.get(2).map(|s| s.to_string());
+
+            // Parse workspace and comment from remaining args
+            // Find "--" separator: either standalone "--" or a part starting with "--"
+            let sep_pos = parts.iter().position(|p| p.starts_with("--"));
+            let (workspace, comment) = if let Some(sep) = sep_pos {
+                let ws = if sep > 2 { Some(parts[2].to_string()) } else { None };
+                // Comment: strip "--" prefix from separator part, join with rest
+                let first = parts[sep].strip_prefix("--").unwrap_or("");
+                let rest: Vec<&str> = parts[sep + 1..].to_vec();
+                let mut cmt_parts = vec![];
+                if !first.is_empty() { cmt_parts.push(first); }
+                cmt_parts.extend(rest);
+                let cmt = if cmt_parts.is_empty() { None } else { Some(cmt_parts.join(" ")) };
+                (ws, cmt)
+            } else if parts.len() > 2 {
+                let cmt = if parts.len() > 3 { Some(parts[3..].join(" ")) } else { None };
+                (Some(parts[2].to_string()), cmt)
+            } else {
+                (None, None)
+            };
 
             // Look up agent config
             let agent_config = config.agents.iter().find(|a| a.name == agent_name);
@@ -245,6 +264,10 @@ pub async fn handle_command(
                         "Session started with agent: `{}`\nWorking directory: `{}`",
                         agent_name, workspace_path
                     );
+
+                    if let Some(ref comment) = comment {
+                        msg.push_str(&format!("\nComment: {}", comment));
+                    }
 
                     if let Some(default_mode) = &agent_config.default_mode {
                         let mode_value = default_mode.trim_end_matches('!');
