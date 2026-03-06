@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Support for `@bot` mentions in channels to start new interactions
+
+### Changed
+
+- Always reply in threads instead of sending new messages
+
 ## [0.4.0] - 2026-02-25
 
 ### Added
