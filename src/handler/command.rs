@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 const HELP_MESSAGE: &str = "Available commands:
-- `#new &lt;agent&gt; [workspace] [--comment]` - Start a new agent session
+- `#new &lt;agent&gt; [workspace] [-- &lt;comment&gt;]` - Start a new agent session
 - `#agents` - List available agents
 - `#mode` - Show available modes and current mode
 - `#mode &lt;value&gt;` - Switch to a different mode
@@ -56,7 +56,7 @@ pub async fn handle_command(
                     .send_message(
                         channel,
                         Some(ts),
-                        "Usage: #new <agent_name> [workspace] [--comment]",
+                        "Usage: #new <agent_name> [workspace] [-- <comment>]",
                     )
                     .await;
                 return;
@@ -64,25 +64,7 @@ pub async fn handle_command(
 
             let agent_name = parts[1];
 
-            // Parse workspace and comment from remaining args
-            // Find "--" separator: either standalone "--" or a part starting with "--"
-            let sep_pos = parts.iter().position(|p| p.starts_with("--"));
-            let (workspace, comment) = if let Some(sep) = sep_pos {
-                let ws = if sep > 2 { Some(parts[2].to_string()) } else { None };
-                // Comment: strip "--" prefix from separator part, join with rest
-                let first = parts[sep].strip_prefix("--").unwrap_or("");
-                let rest: Vec<&str> = parts[sep + 1..].to_vec();
-                let mut cmt_parts = vec![];
-                if !first.is_empty() { cmt_parts.push(first); }
-                cmt_parts.extend(rest);
-                let cmt = if cmt_parts.is_empty() { None } else { Some(cmt_parts.join(" ")) };
-                (ws, cmt)
-            } else if parts.len() > 2 {
-                let cmt = if parts.len() > 3 { Some(parts[3..].join(" ")) } else { None };
-                (Some(parts[2].to_string()), cmt)
-            } else {
-                (None, None)
-            };
+            let (workspace, comment) = parse_workspace_and_comment(&parts[2..]);
 
             // Look up agent config
             let agent_config = config.agents.iter().find(|a| a.name == agent_name);
@@ -1116,5 +1098,64 @@ pub async fn handle_command(
         "#help" | _ => {
             let _ = slack.send_message(channel, thread_ts, HELP_MESSAGE).await;
         }
+    }
+}
+
+fn parse_workspace_and_comment(args: &[&str]) -> (Option<String>, Option<String>) {
+    let sep_pos = args.iter().position(|p| *p == "--");
+    if let Some(sep) = sep_pos {
+        let ws = if sep > 0 {
+            Some(args[0].to_string())
+        } else {
+            None
+        };
+        let cmt = if sep + 1 < args.len() {
+            Some(args[sep + 1..].join(" "))
+        } else {
+            None
+        };
+        (ws, cmt)
+    } else {
+        (args.first().map(|s| s.to_string()), None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_no_args() {
+        let (ws, cmt) = parse_workspace_and_comment(&[]);
+        assert_eq!(ws, None);
+        assert_eq!(cmt, None);
+    }
+
+    #[test]
+    fn test_parse_workspace_only() {
+        let (ws, cmt) = parse_workspace_and_comment(&["~/project"]);
+        assert_eq!(ws, Some("~/project".to_string()));
+        assert_eq!(cmt, None);
+    }
+
+    #[test]
+    fn test_parse_comment_only() {
+        let (ws, cmt) = parse_workspace_and_comment(&["--", "fix", "bug"]);
+        assert_eq!(ws, None);
+        assert_eq!(cmt, Some("fix bug".to_string()));
+    }
+
+    #[test]
+    fn test_parse_workspace_and_comment() {
+        let (ws, cmt) = parse_workspace_and_comment(&["~/project", "--", "fix", "bug"]);
+        assert_eq!(ws, Some("~/project".to_string()));
+        assert_eq!(cmt, Some("fix bug".to_string()));
+    }
+
+    #[test]
+    fn test_parse_separator_only() {
+        let (ws, cmt) = parse_workspace_and_comment(&["--"]);
+        assert_eq!(ws, None);
+        assert_eq!(cmt, None);
     }
 }
