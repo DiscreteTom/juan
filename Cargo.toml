@@ -14,7 +14,7 @@ serde_json = "1"
 toml = "0.8"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "local-time"] }
 anyhow = "1"
 slack-morphism = { version = "2", features = ["hyper"] }
 agent-client-protocol = { version = "0.9", features = [

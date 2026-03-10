@@ -31,8 +31,13 @@ async fn main() -> Result<()> {
             return config::Config::init(&config, r#override);
         }
         cli::Command::Run { config, log_level } => {
-            // Initialize logging with the specified level
-            tracing_subscriber::fmt().with_env_filter(log_level).init();
+            // Initialize logging with the specified level and local timestamps
+            let timer = tracing_subscriber::fmt::time::OffsetTime::local_rfc_3339()
+                .expect("Failed to get local time offset");
+            tracing_subscriber::fmt()
+                .with_env_filter(log_level)
+                .with_timer(timer)
+                .init();
 
             info!("Loading configuration from: {}", config);
             let config = Arc::new(config::Config::load(&config)?);
